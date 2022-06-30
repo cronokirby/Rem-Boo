@@ -68,6 +68,20 @@ impl PRNG {
         out.fill_buf();
         out
     }
+
+    /// Read the next u16 from this PRNG.
+    pub fn next_u16(&mut self) -> u16 {
+        let mut out_bytes = [0u8; 2];
+        self.fill_bytes(&mut out_bytes);
+        u16::from_le_bytes(out_bytes)
+    }
+
+    /// Read the next u8 from this PRNG.
+    pub fn next_u8(&mut self) -> u8 {
+        let mut out_bytes = [0u8; 1];
+        self.fill_bytes(&mut out_bytes);
+        out_bytes[0]
+    }
 }
 
 impl RngCore for PRNG {
