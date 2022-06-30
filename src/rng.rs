@@ -112,7 +112,7 @@ impl RngCore for PRNG {
             while dest.len() >= self.buf.len() {
                 self.fill_buf();
                 dest[..self.buf.len()].copy_from_slice(&self.buf);
-                dest = &mut dest[..self.buf.len()];
+                dest = &mut dest[self.buf.len()..];
             }
 
             self.fill_buf();
@@ -129,3 +129,24 @@ impl RngCore for PRNG {
 }
 
 impl CryptoRng for PRNG {}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_prng_reproducability() {
+        let seed = Seed([0xAB; SEED_LEN]);
+        let mut rng1 = PRNG::seeded(&seed);
+        let mut rng2 = PRNG::seeded(&seed);
+        assert_eq!(rng1.next_u8(), rng2.next_u8());
+        assert_eq!(rng1.next_u16(), rng2.next_u16());
+        assert_eq!(rng1.next_u32(), rng2.next_u32());
+        assert_eq!(rng1.next_u64(), rng2.next_u64());
+        let mut data1 = [0u8; 2 * BUF_LEN];
+        rng1.fill_bytes(&mut data1);
+        let mut data2 = [0u8; 2 * BUF_LEN];
+        rng2.fill_bytes(&mut data2);
+        assert_eq!(data1, data2);
+    }
+}
