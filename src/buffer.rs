@@ -16,6 +16,11 @@ impl MultiBuffer {
         Self { u64s: Vec::new() }
     }
 
+    /// Read a u64 by index, if possible.
+    pub fn read_u64(&self, i: u32) -> Option<u64> {
+        self.u64s.get(i as usize).copied()
+    }
+
     /// Push a u64 into this buffer.
     pub fn push_u64(&mut self, x: u64) {
         self.u64s.push(x);
