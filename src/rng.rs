@@ -24,11 +24,11 @@ impl Seed {
 const BUF_LEN: usize = 64;
 
 /// Represents a pseudo-random number generator.
-/// 
+///
 /// This generator can be initialized via a seed, or a BLAKE3 hasher.
 /// Given the same seed, or a hasher in the same state, the same output will
 /// be generated.
-/// 
+///
 /// When generating a single bit, an entire byte of randomness is consumed,
 /// so generating 32 bits will not yield the same result as generating a u32.
 pub struct PRNG {
@@ -69,3 +69,49 @@ impl PRNG {
         out
     }
 }
+
+impl RngCore for PRNG {
+    fn next_u32(&mut self) -> u32 {
+        let mut out_bytes = [0u8; 4];
+        self.fill_bytes(&mut out_bytes);
+        u32::from_le_bytes(out_bytes)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut out_bytes = [0u8; 8];
+        self.fill_bytes(&mut out_bytes);
+        u64::from_le_bytes(out_bytes)
+    }
+
+    fn fill_bytes(&mut self, mut dest: &mut [u8]) {
+        let remaining = self.buf.len() - self.used;
+        if dest.len() < remaining {
+            let new_used = self.used + dest.len();
+            dest.copy_from_slice(&self.buf[self.used..new_used]);
+            self.used = new_used;
+        } else {
+            // Idea: copy the remainder of this buffer, and then full chunks,
+            // and then a bit of the beginning.
+            dest[..remaining].copy_from_slice(&self.buf[self.used..]);
+            dest = &mut dest[remaining..];
+
+            while dest.len() >= self.buf.len() {
+                self.fill_buf();
+                dest[..self.buf.len()].copy_from_slice(&self.buf);
+                dest = &mut dest[..self.buf.len()];
+            }
+
+            self.fill_buf();
+            let new_used = dest.len();
+            dest.copy_from_slice(&self.buf[..new_used]);
+            self.used = new_used;
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for PRNG {}
