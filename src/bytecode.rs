@@ -1,4 +1,7 @@
+use bincode::{Decode, Encode};
+
 /// Represents a location for an operand.
+#[derive(Clone, Encode, Decode, Debug, PartialEq)]
 pub enum Location {
     /// The top of the relevant stack.
     Top,
@@ -7,6 +10,7 @@ pub enum Location {
 }
 
 /// Represents a simple binary instruction.
+#[derive(Clone, Encode, Decode, Debug, PartialEq)]
 pub enum BinaryInstruction {
     /// xor both operands, bitwise.
     Xor,
@@ -15,6 +19,7 @@ pub enum BinaryInstruction {
 }
 
 /// Represents an instruction in the program.
+#[derive(Clone, Encode, Decode, Debug, PartialEq)]
 pub enum Instruction {
     /// A binary instruction, between the top of the stack, and a location.
     ///
@@ -29,6 +34,7 @@ pub enum Instruction {
 }
 
 /// Represents a program in our bytecode.
+#[derive(Clone, Encode, Decode, Debug, PartialEq)]
 pub struct Program {
     /// The number of public input bytes.
     pub public_size: u32,
