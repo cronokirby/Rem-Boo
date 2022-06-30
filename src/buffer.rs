@@ -11,6 +11,11 @@ pub struct MultiBuffer {
 }
 
 impl MultiBuffer {
+    // Create a new empty MultiBuffer.
+    pub fn new() -> Self {
+        Self { u64s: Vec::new() }
+    }
+
     /// Push a u64 into this buffer.
     pub fn push_u64(&mut self, x: u64) {
         self.u64s.push(x);
