@@ -86,14 +86,19 @@ impl<'a> Interpreter<'a> {
     }
 }
 
-/// Create the auxilary bits, given all of the and bits of the execution.
-fn create_aux_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> MultiBuffer {
-    let mut out = MultiBuffer::new();
+/// Create the and bits for each party.
+///
+/// Every party, except one, will sample these bits randomly.
+/// The other parties
+fn create_and_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> Vec<MultiBuffer> {
+    let mut out = vec![MultiBuffer::new(); prngs.len() + 1];
     for &(mut x) in and_trace.iter_u64() {
-        for prng in prngs.iter_mut() {
-            x ^= prng.next_u64();
+        for (i, prng) in prngs.iter_mut().enumerate() {
+            let y = prng.next_u64();
+            out[i + 1].push_u64(x);
+            x ^= y;
         }
-        out.push_u64(x);
+        out[0].push_u64(x);
     }
     out
 }
