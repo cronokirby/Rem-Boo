@@ -1,6 +1,9 @@
+use rand_core::RngCore;
+
 use crate::{
     buffer::MultiBuffer,
     bytecode::{BinaryInstruction, Instruction, Location, Program},
+    rng::PRNG,
 };
 
 enum Error {
@@ -81,4 +84,16 @@ impl<'a> Interpreter<'a> {
     pub fn trace(self) -> MultiBuffer {
         self.trace
     }
+}
+
+/// Create the auxilary bits, given all of the and bits of the execution.
+fn create_aux_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> MultiBuffer {
+    let mut out = MultiBuffer::new();
+    for &(mut x) in and_trace.iter_u64() {
+        for prng in prngs.iter_mut() {
+            x ^= prng.next_u64();
+        }
+        out.push_u64(x);
+    }
+    out
 }

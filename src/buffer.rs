@@ -30,4 +30,9 @@ impl MultiBuffer {
     pub fn pop_u64(&mut self) -> Option<u64> {
         self.u64s.pop()
     }
+
+    /// Iterate over all the u64s in the buffer.
+    pub fn iter_u64(&self) -> impl Iterator<Item = &u64> {
+        self.u64s.iter()
+    }
 }
