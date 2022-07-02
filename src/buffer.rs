@@ -33,6 +33,10 @@ impl MultiBuffer {
         self.u64s.pop()
     }
 
+    pub fn top_u64(&self) -> Option<u64> {
+        self.u64s.last().copied()
+    }
+
     /// Iterate over all the u64s in the buffer.
     pub fn iter_u64(&self) -> impl Iterator<Item = &u64> {
         self.u64s.iter()

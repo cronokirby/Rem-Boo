@@ -1,7 +1,9 @@
+use std::sync::Mutex;
+
 use rand_core::RngCore;
 
 use crate::{
-    buffer::MultiBuffer,
+    buffer::{MultiBuffer, MultiQueue},
     bytecode::{BinaryInstruction, Instruction, Location, Program},
     rng::PRNG,
 };
@@ -101,4 +103,60 @@ fn create_and_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> Vec<MultiBuff
         out[0].push_u64(x);
     }
     out
+}
+
+/// Represents a single party in the simulated multi-party computation.
+///
+/// This party can run a lot of the computation itself, but sometimes needs
+/// additional information from the outside. We drive the execution by
+/// calling specific methods on the party.
+struct Party {
+    /// The rng used to generate new bits for and results.
+    rng: PRNG,
+    /// This party's sharing of the bits used for calculating ands.
+    and_bits: MultiQueue,
+    /// This party's share of the private input.
+    private: MultiBuffer,
+    /// This holds the current state of the party's stack.
+    stack: MultiBuffer,
+}
+
+impl Party {
+    pub fn new(rng: PRNG, and_bits: MultiBuffer, private: MultiBuffer) -> Self {
+        Self {
+            rng,
+            and_bits: MultiQueue::new(and_bits),
+            private,
+            stack: MultiBuffer::new(),
+        }
+    }
+
+    pub fn xor64(&mut self) {
+        let a = self.stack.pop_u64().unwrap();
+        self.xor64imm(a)
+    }
+
+    pub fn xor64imm(&mut self, imm: u64) {
+        let b = self.stack.pop_u64().unwrap();
+        self.stack.push_u64(imm ^ b)
+    }
+
+    pub fn and64imm(&mut self, imm: u64) {
+        let b = self.stack.pop_u64().unwrap();
+        self.stack.push_u64(imm & b);
+    }
+
+    pub fn push_top64(&mut self) {
+        let top = self.stack.pop_u64().unwrap();
+        self.stack.push_u64(top);
+    }
+
+    pub fn push_priv64(&mut self, i: u32) {
+        let x = self.private.read_u64(i).unwrap();
+        self.stack.push_u64(x);
+    }
+
+    pub fn top64(&self) -> u64 {
+        self.stack.top_u64().unwrap()
+    }
 }
