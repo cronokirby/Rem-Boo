@@ -146,6 +146,14 @@ impl Party {
         self.stack.push_u64(imm & b);
     }
 
+    pub fn and64(&mut self, za: u64, zb: u64) -> u64 {
+        let a = self.stack.pop_u64().unwrap();
+        let b = self.stack.pop_u64().unwrap();
+        let c = self.rng.next_u64();
+        self.stack.push_u64(c);
+        (za & b) ^ (zb & a) ^ self.and_bits.next_u64() ^ c
+    }
+
     pub fn push_top64(&mut self) {
         let top = self.stack.pop_u64().unwrap();
         self.stack.push_u64(top);
