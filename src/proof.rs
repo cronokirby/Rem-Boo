@@ -165,6 +165,10 @@ impl Party {
     pub fn pop64(&mut self) -> u64 {
         self.stack.pop_u64().unwrap()
     }
+
+    pub fn push64(&mut self, x: u64) {
+        self.stack.push_u64(x)
+    }
 }
 
 struct Simulator {
@@ -252,11 +256,33 @@ impl Simulator {
         };
     }
 
+    fn and64(&mut self, loc: Location) {
+        match loc {
+            // For public values, the parties can compute locally
+            Location::Public(i) => {
+                let imm = self.pub64(i);
+                self.iter_parties().for_each(|party| party.and64imm(imm));
+            }
+            // For private values, we need interaction
+            Location::Top => {
+                let za = self.input_party.pop64();
+                let zb = self.input_party.pop64();
+                let mut zc = za & zb;
+                for (rng, and_bits, party, messages) in self.parties.iter_mut() {
+                    let s_share = party.and64(rng, and_bits, za, zb);
+                    messages.push_u64(s_share);
+                    zc ^= s_share;
+                }
+                self.input_party.push64(zc);
+            }
+        }
+    }
+
     fn instruction(&mut self, instr: &Instruction) -> bool {
         match instr {
             Instruction::Binary(instr, loc) => match instr {
                 BinaryInstruction::Xor => self.xor64(*loc),
-                BinaryInstruction::And => todo!(),
+                BinaryInstruction::And => self.and64(*loc),
             },
             Instruction::AssertEq(loc) => return self.assert_eq64(*loc),
             Instruction::PushTop => self.push_top64(),
