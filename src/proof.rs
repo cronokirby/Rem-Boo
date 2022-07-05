@@ -111,8 +111,6 @@ fn create_and_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> Vec<MultiBuff
 /// additional information from the outside. We drive the execution by
 /// calling specific methods on the party.
 struct Party {
-    /// The rng used to generate new bits for and results.
-    rng: PRNG,
     /// This party's sharing of the bits used for calculating ands.
     and_bits: MultiQueue,
     /// This party's share of the private input.
@@ -122,9 +120,8 @@ struct Party {
 }
 
 impl Party {
-    pub fn new(rng: PRNG, and_bits: MultiBuffer, private: MultiBuffer) -> Self {
+    pub fn new(and_bits: MultiBuffer, private: MultiBuffer) -> Self {
         Self {
-            rng,
             and_bits: MultiQueue::new(and_bits),
             private,
             stack: MultiBuffer::new(),
@@ -146,10 +143,10 @@ impl Party {
         self.stack.push_u64(imm & b);
     }
 
-    pub fn and64(&mut self, za: u64, zb: u64) -> u64 {
+    pub fn and64(&mut self, rng: &mut PRNG, za: u64, zb: u64) -> u64 {
         let a = self.stack.pop_u64().unwrap();
         let b = self.stack.pop_u64().unwrap();
-        let c = self.rng.next_u64();
+        let c = rng.next_u64();
         self.stack.push_u64(c);
         (za & b) ^ (zb & a) ^ self.and_bits.next_u64() ^ c
     }
