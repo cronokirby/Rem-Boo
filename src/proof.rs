@@ -232,13 +232,7 @@ impl Simulator {
 
     fn assert_eq64(&mut self, loc: Location) -> bool {
         // Strategy: xor with the location, pull the value, assert zero
-        match loc {
-            Location::Top => self.iter_parties().for_each(|party| party.xor64()),
-            Location::Public(i) => {
-                let imm = self.pub64(i);
-                self.input_party.xor64imm(imm);
-            }
-        };
+        self.xor64(loc);
         let mut output = self.input_party.pop64();
         for (_, _, party, messages) in self.parties.iter_mut() {
             let mask = party.pop64();
@@ -248,9 +242,22 @@ impl Simulator {
         output == 0
     }
 
+    fn xor64(&mut self, loc: Location) {
+        match loc {
+            Location::Top => self.iter_parties().for_each(|party| party.xor64()),
+            Location::Public(i) => {
+                let imm = self.pub64(i);
+                self.input_party.xor64imm(imm);
+            }
+        };
+    }
+
     fn instruction(&mut self, instr: &Instruction) -> bool {
         match instr {
-            Instruction::Binary(_, _) => todo!(),
+            Instruction::Binary(instr, loc) => match instr {
+                BinaryInstruction::Xor => self.xor64(*loc),
+                BinaryInstruction::And => todo!(),
+            },
             Instruction::AssertEq(loc) => return self.assert_eq64(*loc),
             Instruction::PushTop => self.push_top64(),
             Instruction::PushPrivate(i) => self.push_priv64(*i),
