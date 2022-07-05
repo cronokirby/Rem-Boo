@@ -111,8 +111,6 @@ fn create_and_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> Vec<MultiBuff
 /// additional information from the outside. We drive the execution by
 /// calling specific methods on the party.
 struct Party {
-    /// This party's sharing of the bits used for calculating ands.
-    and_bits: MultiQueue,
     /// This party's share of the private input.
     private: MultiBuffer,
     /// This holds the current state of the party's stack.
@@ -120,9 +118,8 @@ struct Party {
 }
 
 impl Party {
-    pub fn new(and_bits: MultiBuffer, private: MultiBuffer) -> Self {
+    pub fn new(private: MultiBuffer) -> Self {
         Self {
-            and_bits: MultiQueue::new(and_bits),
             private,
             stack: MultiBuffer::new(),
         }
@@ -143,12 +140,12 @@ impl Party {
         self.stack.push_u64(imm & b);
     }
 
-    pub fn and64(&mut self, rng: &mut PRNG, za: u64, zb: u64) -> u64 {
+    pub fn and64(&mut self, rng: &mut PRNG, and_bits: &mut MultiQueue, za: u64, zb: u64) -> u64 {
         let a = self.stack.pop_u64().unwrap();
         let b = self.stack.pop_u64().unwrap();
         let c = rng.next_u64();
         self.stack.push_u64(c);
-        (za & b) ^ (zb & a) ^ self.and_bits.next_u64() ^ c
+        (za & b) ^ (zb & a) ^ and_bits.next_u64() ^ c
     }
 
     pub fn push_top64(&mut self) {
@@ -163,5 +160,43 @@ impl Party {
 
     pub fn top64(&self) -> u64 {
         self.stack.top_u64().unwrap()
+    }
+}
+
+struct Simulator {
+    /// For each party, we hold:
+    /// - Their RNG
+    /// - A queue for their and bits
+    /// - The party itself
+    /// - The outgoing messages
+    parties: Vec<(PRNG, MultiQueue, Party, MultiBuffer)>,
+    input_party: Party,
+}
+
+impl Simulator {
+    fn new(
+        masked_input: MultiBuffer,
+        rngs: Vec<PRNG>,
+        and_bits: Vec<MultiBuffer>,
+        masks: Vec<MultiBuffer>,
+    ) -> Self {
+        let mut parties = Vec::with_capacity(rngs.len());
+        for ((rng, and_bits), masks) in rngs
+            .into_iter()
+            .zip(and_bits.into_iter())
+            .zip(masks.into_iter())
+        {
+            parties.push((
+                rng,
+                MultiQueue::new(and_bits),
+                Party::new(masks),
+                MultiBuffer::new(),
+            ));
+        }
+        let input_party = Party::new(masked_input);
+        Self {
+            parties,
+            input_party,
+        }
     }
 }
