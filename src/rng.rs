@@ -50,7 +50,7 @@ impl PRNG {
     pub fn seeded(seed: &Seed) -> Self {
         // We extend the seed to an arbitrary stream of bits, with some domain separation.
         let mut hasher = blake3::Hasher::new_keyed(&seed.0);
-        hasher.update(PRNG_CONTEXT.as_bytes());
+        hasher.update(PRNG_CONTEXT);
         Self::from_hasher(hasher)
     }
 
