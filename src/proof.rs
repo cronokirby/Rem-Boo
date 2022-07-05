@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::iter;
 
 use rand_core::RngCore;
 
@@ -161,9 +161,14 @@ impl Party {
     pub fn top64(&self) -> u64 {
         self.stack.top_u64().unwrap()
     }
+
+    pub fn pop64(&mut self) -> u64 {
+        self.stack.pop_u64().unwrap()
+    }
 }
 
 struct Simulator {
+    public: MultiBuffer,
     /// For each party, we hold:
     /// - Their RNG
     /// - A queue for their and bits
@@ -174,7 +179,8 @@ struct Simulator {
 }
 
 impl Simulator {
-    fn new(
+    pub fn new(
+        public: MultiBuffer,
         masked_input: MultiBuffer,
         rngs: Vec<PRNG>,
         and_bits: Vec<MultiBuffer>,
@@ -195,8 +201,69 @@ impl Simulator {
         }
         let input_party = Party::new(masked_input);
         Self {
+            public,
             parties,
             input_party,
         }
+    }
+
+    fn iter_parties(&mut self) -> impl Iterator<Item = &mut Party> {
+        self.parties
+            .iter_mut()
+            .map(|(_, _, party, _)| party)
+            .chain(iter::once(&mut self.input_party))
+    }
+
+    fn pub64(&mut self, i: u32) -> u64 {
+        self.public.read_u64(i).unwrap()
+    }
+
+    fn push_top64(&mut self) {
+        for party in self.iter_parties() {
+            party.push_top64();
+        }
+    }
+
+    fn push_priv64(&mut self, i: u32) {
+        for party in self.iter_parties() {
+            party.push_priv64(i);
+        }
+    }
+
+    fn assert_eq64(&mut self, loc: Location) -> bool {
+        // Strategy: xor with the location, pull the value, assert zero
+        match loc {
+            Location::Top => self.iter_parties().for_each(|party| party.xor64()),
+            Location::Public(i) => {
+                let imm = self.pub64(i);
+                self.input_party.xor64imm(imm);
+            }
+        };
+        let mut output = self.input_party.pop64();
+        for (_, _, party, messages) in self.parties.iter_mut() {
+            let mask = party.pop64();
+            messages.push_u64(mask);
+            output ^= mask;
+        }
+        output == 0
+    }
+
+    fn instruction(&mut self, instr: &Instruction) -> bool {
+        match instr {
+            Instruction::Binary(_, _) => todo!(),
+            Instruction::AssertEq(loc) => return self.assert_eq64(*loc),
+            Instruction::PushTop => self.push_top64(),
+            Instruction::PushPrivate(i) => self.push_priv64(*i),
+        };
+        true
+    }
+
+    pub fn run(&mut self, program: &Program) -> bool {
+        for instr in &program.instructions {
+            if !self.instruction(instr) {
+                return false;
+            }
+        }
+        true
     }
 }

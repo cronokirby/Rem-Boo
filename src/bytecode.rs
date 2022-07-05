@@ -1,7 +1,7 @@
 use bincode::{Decode, Encode};
 
 /// Represents a location for an operand.
-#[derive(Clone, Encode, Decode, Debug, PartialEq)]
+#[derive(Clone, Copy, Encode, Decode, Debug, PartialEq)]
 pub enum Location {
     /// The top of the relevant stack.
     Top,
