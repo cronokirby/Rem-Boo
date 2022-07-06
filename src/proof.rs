@@ -1,6 +1,6 @@
 use std::iter;
 
-use bincode::{config, encode_into_slice, encode_into_std_write, Decode, Encode};
+use bincode::{config, encode_into_std_write, Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
@@ -111,15 +111,15 @@ fn create_and_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> Vec<MultiBuff
 /// This party can run a lot of the computation itself, but sometimes needs
 /// additional information from the outside. We drive the execution by
 /// calling specific methods on the party.
-struct Party {
+struct Party<'a> {
     /// This party's share of the private input.
-    private: MultiBuffer,
+    private: &'a MultiBuffer,
     /// This holds the current state of the party's stack.
     stack: MultiBuffer,
 }
 
-impl Party {
-    pub fn new(private: MultiBuffer) -> Self {
+impl<'a> Party<'a> {
+    pub fn new(private: &'a MultiBuffer) -> Self {
         Self {
             private,
             stack: MultiBuffer::new(),
@@ -172,24 +172,24 @@ impl Party {
     }
 }
 
-struct Simulator {
-    public: MultiBuffer,
+struct Simulator<'a> {
+    public: &'a MultiBuffer,
     /// For each party, we hold:
     /// - Their RNG
     /// - A queue for their and bits
     /// - The party itself
     /// - The outgoing messages
-    parties: Vec<(PRNG, MultiQueue, Party, MultiBuffer)>,
-    input_party: Party,
+    parties: Vec<(PRNG, MultiQueue<'a>, Party<'a>, MultiBuffer)>,
+    input_party: Party<'a>,
 }
 
-impl Simulator {
+impl<'a> Simulator<'a> {
     pub fn new(
-        public: MultiBuffer,
-        masked_input: MultiBuffer,
+        public: &'a MultiBuffer,
+        masked_input: &'a MultiBuffer,
         rngs: Vec<PRNG>,
-        and_bits: Vec<MultiBuffer>,
-        masks: Vec<MultiBuffer>,
+        and_bits: &'a [MultiBuffer],
+        masks: &'a [MultiBuffer],
     ) -> Self {
         let mut parties = Vec::with_capacity(rngs.len());
         for ((rng, and_bits), masks) in rngs
@@ -212,7 +212,7 @@ impl Simulator {
         }
     }
 
-    fn iter_parties(&mut self) -> impl Iterator<Item = &mut Party> {
+    fn iter_parties(&mut self) -> impl Iterator<Item = &mut Party<'a>> {
         self.parties
             .iter_mut()
             .map(|(_, _, party, _)| party)
@@ -300,6 +300,13 @@ impl Simulator {
         }
         true
     }
+
+    pub fn messages(self) -> Vec<MultiBuffer> {
+        self.parties
+            .into_iter()
+            .map(|(_, _, _, messages)| messages)
+            .collect()
+    }
 }
 
 const COMMITMENT_SIZE: usize = 32;
@@ -326,15 +333,16 @@ impl CommitmentKey {
 }
 
 /// Represents the state of a party that we commit to.
-/// 
+///
 /// This contains a seed for their randomness, along with
-enum State {
-    WithoutAux(Seed),
-    WithAux(Seed, MultiBuffer),
+#[derive(Clone, Copy, Debug)]
+enum State<'a> {
+    WithoutAux(&'a Seed),
+    WithAux(&'a Seed, &'a MultiBuffer),
 }
 
-impl State {
-    fn commit(&self, key: &CommitmentKey) -> Commitment {
+impl<'a> State<'a> {
+    fn commit(self, key: &CommitmentKey) -> Commitment {
         let mut hasher = blake3::Hasher::new_keyed(&key.0);
         let (seed, maybe_buffer) = match self {
             State::WithoutAux(seed) => (seed, None),
@@ -350,5 +358,174 @@ impl State {
                 .expect("failed to write value in commitment");
         };
         Commitment(*hasher.finalize().as_bytes())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Encode, Decode)]
+struct Hash([u8; blake3::OUT_LEN]);
+
+impl Into<Hash> for blake3::Hash {
+    fn into(self) -> Hash {
+        Hash(self.into())
+    }
+}
+
+struct Prover {
+    commitment: Hash,
+    root_seeds: Vec<Seed>,
+    message_hashes: Vec<Hash>,
+    all_states: Vec<(MultiBuffer, Vec<Seed>)>,
+    all_commitment_keys: Vec<Vec<CommitmentKey>>,
+    all_commitments: Vec<Vec<Commitment>>,
+    all_masked_inputs: Vec<MultiBuffer>,
+    all_messages: Vec<Vec<MultiBuffer>>,
+}
+
+impl Prover {
+    fn setup<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        m: usize,
+        n: usize,
+        program: &Program,
+        public: &MultiBuffer,
+        private: &MultiBuffer,
+    ) -> Result<Self> {
+        // First, execute the program to get a trace of the and bits.
+        let mut interpreter = Interpreter::new(public, private);
+        interpreter.run(program)?;
+        let trace = interpreter.trace();
+
+        let mut root_seeds = Vec::with_capacity(m);
+        for _ in 0..m {
+            root_seeds.push(Seed::random(rng));
+        }
+
+        let mut commitment_hashes = Vec::with_capacity(m);
+        let mut message_hashes = Vec::with_capacity(m);
+        let mut all_states = Vec::with_capacity(m);
+        let mut all_commitment_keys = Vec::with_capacity(m);
+        let mut all_commitments = Vec::with_capacity(m);
+        let mut all_masked_inputs = Vec::with_capacity(m);
+        let mut all_messages = Vec::with_capacity(m);
+
+        for root_seed in &root_seeds {
+            let mut party_seeds = Vec::with_capacity(n);
+            let mut commitment_keys = Vec::with_capacity(n);
+            {
+                let mut prng = PRNG::seeded(root_seed);
+                for _ in 0..n {
+                    party_seeds.push(Seed::random(&mut prng));
+                    commitment_keys.push(CommitmentKey::random(&mut prng));
+                }
+            }
+
+            // Split party seeds into and seeds and prngs
+            let mut and_seeds = Vec::with_capacity(n);
+            let mut prngs = Vec::with_capacity(n);
+            for seed in &party_seeds {
+                let mut prng = PRNG::seeded(seed);
+                and_seeds.push(Seed::random(&mut prng));
+                prngs.push(PRNG::seeded(&Seed::random(&mut prng)));
+            }
+
+            // Now, generate the and bits. The first party doesn't get random bits.
+            let mut and_bits = Vec::with_capacity(n);
+            and_bits.push(trace.clone());
+            for seed in &and_seeds[1..] {
+                let mut prng = PRNG::seeded(seed);
+                let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
+                and_bits[0].xor(&aux);
+                and_bits.push(aux);
+            }
+
+            // Generate the state commitments
+            let mut commitments = Vec::with_capacity(n);
+            for (i, ((party_seed, aux), commitment_key)) in party_seeds
+                .iter()
+                .zip(and_bits.iter())
+                .zip(commitment_keys.iter())
+                .enumerate()
+            {
+                let state = if i == 0 {
+                    State::WithAux(party_seed, aux)
+                } else {
+                    State::WithoutAux(party_seed)
+                };
+                commitments.push(state.commit(commitment_key));
+            }
+
+            // Next we need to run the simulation.
+            // First, prepare the masks for each party, and the masked input
+            let mut masked_input = private.clone();
+            let mut masks = Vec::with_capacity(n);
+            for prng in &mut prngs {
+                let mask = MultiBuffer::random(prng, masked_input.len_u64());
+                masked_input.xor(&mask);
+                masks.push(mask);
+            }
+
+            // Then, run the simulation
+            let mut simulator = Simulator::new(public, &masked_input, prngs, &and_bits, &masks);
+            if !simulator.run(program) {
+                return Err(Error::BadProgram);
+            }
+
+            // Finally, extract out the messages, and hash everything
+            let messages = simulator.messages();
+            let commitment_hash: Hash = {
+                let mut hasher = blake3::Hasher::new();
+                encode_into_std_write(&commitments, &mut hasher, config::standard())
+                    .expect("failed to call hash function");
+                hasher.finalize().into()
+            };
+            let mut message_hash_key = [0u8; blake3::KEY_LEN];
+            rng.fill_bytes(&mut message_hash_key);
+            let message_hash: Hash = {
+                let mut hasher = blake3::Hasher::new_keyed(&message_hash_key);
+                encode_into_std_write(&masked_input, &mut hasher, config::standard())
+                    .expect("failed to call hash function");
+                encode_into_std_write(&messages, &mut hasher, config::standard())
+                    .expect("failed to call hash function");
+                hasher.finalize().into()
+            };
+
+            commitment_hashes.push(commitment_hash);
+            message_hashes.push(message_hash);
+            all_states.push((std::mem::take(&mut and_bits[0]), party_seeds));
+            all_commitment_keys.push(commitment_keys);
+            all_commitments.push(commitments);
+            all_masked_inputs.push(masked_input);
+            all_messages.push(messages);
+        }
+
+        let hash0: Hash = {
+            let mut hasher = blake3::Hasher::new();
+            encode_into_std_write(&commitment_hashes, &mut hasher, config::standard())
+                .expect("failed to call hash function");
+            hasher.finalize().into()
+        };
+        let hash1: Hash = {
+            let mut hasher = blake3::Hasher::new();
+            encode_into_std_write(&message_hashes, &mut hasher, config::standard())
+                .expect("failed to call hash function");
+            hasher.finalize().into()
+        };
+        let commitment: Hash = {
+            let mut hasher = blake3::Hasher::new();
+            encode_into_std_write((hash0, hash1), &mut hasher, config::standard())
+                .expect("failed to call hash function");
+            hasher.finalize().into()
+        };
+
+        Ok(Prover {
+            commitment,
+            root_seeds,
+            message_hashes,
+            all_states,
+            all_commitments,
+            all_commitment_keys,
+            all_masked_inputs,
+            all_messages,
+        })
     }
 }

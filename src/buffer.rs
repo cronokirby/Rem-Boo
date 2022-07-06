@@ -7,7 +7,7 @@ use rand_core::{CryptoRng, RngCore};
 /// aligned accesses to these values.
 ///
 /// This buffer can be used as a random access array, or even as a stack.
-#[derive(Clone, Encode, Decode, Debug, PartialEq)]
+#[derive(Clone, Encode, Default, Decode, Debug, PartialEq)]
 pub struct MultiBuffer {
     /// The buffer containing u64s.
     u64s: Vec<u64>,
@@ -26,6 +26,10 @@ impl MultiBuffer {
             u64s.push(rng.next_u64());
         }
         Self { u64s }
+    }
+
+    pub fn len_u64(&self) -> usize {
+        self.u64s.len()
     }
 
     /// Xor this buffer with the values of another buffer
@@ -64,15 +68,15 @@ impl MultiBuffer {
 ///
 /// This is useful in situations where we need to read the elements of a buffer
 /// in sequence.
-pub struct MultiQueue {
-    buffer: MultiBuffer,
+pub struct MultiQueue<'a> {
+    buffer: &'a MultiBuffer,
     /// The next index to read a u64 from the buffer.
     i_u64: usize,
 }
 
-impl MultiQueue {
+impl<'a> MultiQueue<'a> {
     /// Create a new queue by wrapping a buffer.
-    pub fn new(buffer: MultiBuffer) -> Self {
+    pub fn new(buffer: &'a MultiBuffer) -> Self {
         Self { buffer, i_u64: 0 }
     }
 
