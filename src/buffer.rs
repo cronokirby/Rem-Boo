@@ -1,4 +1,5 @@
 use bincode::{Decode, Encode};
+use rand_core::{CryptoRng, RngCore};
 
 /// A MultiBuffer holds a single buffer for each data size.
 ///
@@ -16,6 +17,15 @@ impl MultiBuffer {
     // Create a new empty MultiBuffer.
     pub fn new() -> Self {
         Self { u64s: Vec::new() }
+    }
+
+    /// Create a random MultiBuffer with certain sizes
+    pub fn random<R: RngCore + CryptoRng>(rng: &mut R, len64: usize) -> Self {
+        let mut u64s = Vec::with_capacity(len64);
+        for _ in 0..len64 {
+            u64s.push(rng.next_u64());
+        }
+        Self { u64s }
     }
 
     /// Read a u64 by index, if possible.
