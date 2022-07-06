@@ -1,11 +1,12 @@
 use std::iter;
 
-use rand_core::RngCore;
+use bincode::{config, encode_into_slice, encode_into_std_write, Decode, Encode};
+use rand_core::{CryptoRng, RngCore};
 
 use crate::{
     buffer::{MultiBuffer, MultiQueue},
     bytecode::{BinaryInstruction, Instruction, Location, Program},
-    rng::PRNG,
+    rng::{Seed, PRNG},
 };
 
 enum Error {
@@ -298,5 +299,56 @@ impl Simulator {
             }
         }
         true
+    }
+}
+
+const COMMITMENT_SIZE: usize = 32;
+
+/// Represents a commitment to some value.
+///
+/// This commitment can be compared for equality without worrying about constant-time.
+#[derive(Clone, Copy, Debug, Encode, Decode, PartialEq)]
+struct Commitment([u8; COMMITMENT_SIZE]);
+
+/// A key used to produce a commitment.
+///
+/// The key allows the commitment to be hiding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommitmentKey([u8; blake3::KEY_LEN]);
+
+impl CommitmentKey {
+    /// Generate a random CommitmentKey.
+    pub fn random<R: RngCore + CryptoRng>(rng: &mut R) -> Self {
+        let mut bytes = [0u8; blake3::KEY_LEN];
+        rng.fill_bytes(&mut bytes[..]);
+        Self(bytes)
+    }
+}
+
+/// Represents the state of a party that we commit to.
+/// 
+/// This contains a seed for their randomness, along with
+enum State {
+    WithoutAux(Seed),
+    WithAux(Seed, MultiBuffer),
+}
+
+impl State {
+    fn commit(&self, key: &CommitmentKey) -> Commitment {
+        let mut hasher = blake3::Hasher::new_keyed(&key.0);
+        let (seed, maybe_buffer) = match self {
+            State::WithoutAux(seed) => (seed, None),
+            State::WithAux(seed, buffer) => (seed, Some(buffer)),
+        };
+        // The encoding will be SEED_LEN || SEED || BUFFER_ENCODING.
+        // Encoding the length of the seed isn't strictly necessary, but doesn't hurt.
+        // In theory, we don't need to because it's a fixed size.
+        encode_into_std_write(seed, &mut hasher, config::standard())
+            .expect("failed to write value in commitment");
+        if let Some(buffer) = maybe_buffer {
+            encode_into_std_write(buffer, &mut hasher, config::standard())
+                .expect("failed to write value in commitment");
+        };
+        Commitment(*hasher.finalize().as_bytes())
     }
 }

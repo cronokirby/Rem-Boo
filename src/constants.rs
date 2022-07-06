@@ -4,4 +4,4 @@
 /// generate from a seed.
 pub const PRNG_CONTEXT: &[u8] = b"Rem-Boo v0.1 PRNG CONTEXT";
 /// The context string we use for our commitments.
-pub const COMMITMENT_CONTEXT: &str = "Rem-Boo v0.1 COMMITMENT CONTEXT";
+pub const COMMITMENT_CONTEXT: &[u8] = b"Rem-Boo v0.1 COMMITMENT CONTEXT";

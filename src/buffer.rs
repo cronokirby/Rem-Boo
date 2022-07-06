@@ -1,4 +1,4 @@
-use std::ops::Mul;
+use bincode::{Decode, Encode};
 
 /// A MultiBuffer holds a single buffer for each data size.
 ///
@@ -6,7 +6,7 @@ use std::ops::Mul;
 /// aligned accesses to these values.
 ///
 /// This buffer can be used as a random access array, or even as a stack.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Encode, Decode, Debug, PartialEq)]
 pub struct MultiBuffer {
     /// The buffer containing u64s.
     u64s: Vec<u64>,
