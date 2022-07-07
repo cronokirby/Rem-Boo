@@ -1,4 +1,4 @@
-use std::iter;
+use std::{iter, mem};
 
 use bincode::{config, encode_into_std_write, Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
@@ -314,13 +314,13 @@ const COMMITMENT_SIZE: usize = 32;
 /// Represents a commitment to some value.
 ///
 /// This commitment can be compared for equality without worrying about constant-time.
-#[derive(Clone, Copy, Debug, Encode, Decode, PartialEq)]
+#[derive(Clone, Copy, Default, Debug, Encode, Decode, PartialEq)]
 struct Commitment([u8; COMMITMENT_SIZE]);
 
 /// A key used to produce a commitment.
 ///
 /// The key allows the commitment to be hiding.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Encode, Decode, PartialEq)]
 pub struct CommitmentKey([u8; blake3::KEY_LEN]);
 
 impl CommitmentKey {
@@ -364,16 +364,36 @@ impl<'a> State<'a> {
 #[derive(Clone, Copy, Debug, Encode, Decode)]
 struct Hash([u8; blake3::OUT_LEN]);
 
-impl Into<Hash> for blake3::Hash {
-    fn into(self) -> Hash {
-        Hash(self.into())
+impl From<blake3::Hash> for Hash {
+    fn from(val: blake3::Hash) -> Self {
+        Hash(val.into())
     }
 }
 
+#[derive(Clone, Debug, Encode, Decode)]
+struct ResponseInstance {
+    first_aux: Option<MultiBuffer>,
+    party_seeds: Vec<Seed>,
+    masked_input: MultiBuffer,
+    messages: MultiBuffer,
+    commitment: Commitment,
+    message_hash_key: [u8; blake3::KEY_LEN],
+}
+
+#[derive(Clone, Debug, Encode, Decode)]
+struct Response {
+    excluded_root_seeds: Vec<Seed>,
+    excluded_message_hashes: Vec<Hash>,
+    instances: Vec<ResponseInstance>,
+}
+
 struct Prover {
+    m: usize,
+    n: usize,
     commitment: Hash,
     root_seeds: Vec<Seed>,
     message_hashes: Vec<Hash>,
+    message_hash_keys: Vec<[u8; blake3::KEY_LEN]>,
     all_states: Vec<(MultiBuffer, Vec<Seed>)>,
     all_commitment_keys: Vec<Vec<CommitmentKey>>,
     all_commitments: Vec<Vec<Commitment>>,
@@ -382,7 +402,7 @@ struct Prover {
 }
 
 impl Prover {
-    fn setup<R: RngCore + CryptoRng>(
+    pub fn setup<R: RngCore + CryptoRng>(
         rng: &mut R,
         m: usize,
         n: usize,
@@ -402,6 +422,7 @@ impl Prover {
 
         let mut commitment_hashes = Vec::with_capacity(m);
         let mut message_hashes = Vec::with_capacity(m);
+        let mut message_hash_keys = Vec::with_capacity(m);
         let mut all_states = Vec::with_capacity(m);
         let mut all_commitment_keys = Vec::with_capacity(m);
         let mut all_commitments = Vec::with_capacity(m);
@@ -480,6 +501,7 @@ impl Prover {
             };
             let mut message_hash_key = [0u8; blake3::KEY_LEN];
             rng.fill_bytes(&mut message_hash_key);
+            message_hash_keys.push(message_hash_key);
             let message_hash: Hash = {
                 let mut hasher = blake3::Hasher::new_keyed(&message_hash_key);
                 encode_into_std_write(&masked_input, &mut hasher, config::standard())
@@ -491,7 +513,7 @@ impl Prover {
 
             commitment_hashes.push(commitment_hash);
             message_hashes.push(message_hash);
-            all_states.push((std::mem::take(&mut and_bits[0]), party_seeds));
+            all_states.push((mem::take(&mut and_bits[0]), party_seeds));
             all_commitment_keys.push(commitment_keys);
             all_commitments.push(commitments);
             all_masked_inputs.push(masked_input);
@@ -518,14 +540,70 @@ impl Prover {
         };
 
         Ok(Prover {
+            m,
+            n,
             commitment,
             root_seeds,
             message_hashes,
+            message_hash_keys,
             all_states,
             all_commitments,
             all_commitment_keys,
             all_masked_inputs,
             all_messages,
         })
+    }
+
+    pub fn commitment(&self) -> Hash {
+        self.commitment
+    }
+
+    pub fn response(mut self, included: &[Option<usize>]) -> Response {
+        debug_assert_eq!(included.len(), self.m);
+        let included_count = included.iter().filter(|x| x.is_some()).count();
+        let excluded_count = included.len() - included_count;
+
+        let mut excluded_root_seeds = Vec::with_capacity(excluded_count);
+        let mut excluded_message_hashes = Vec::with_capacity(excluded_count);
+        included
+            .iter()
+            .zip(self.root_seeds.into_iter())
+            .zip(self.message_hashes.into_iter())
+            .filter(|((included, _), _)| included.is_some())
+            .for_each(|((_, root_seed), message_hashes)| {
+                excluded_root_seeds.push(root_seed);
+                excluded_message_hashes.push(message_hashes);
+            });
+
+        let mut instances = Vec::with_capacity(included_count);
+        for (i, j) in included
+            .iter()
+            .enumerate()
+            .filter_map(|(i, j)| j.map(|j| (i, j)))
+        {
+            let (aux, mut states) = mem::take(&mut self.all_states[i]);
+            let first_aux = if j == 0 { None } else { Some(aux) };
+            states.remove(j);
+            let party_seeds = states;
+            let masked_input = mem::take(&mut self.all_masked_inputs[i]);
+            let messages = mem::take(&mut self.all_messages[i][j]);
+            let commitment = mem::take(&mut self.all_commitments[i][j]);
+            let message_hash_key = mem::take(&mut self.message_hash_keys[i]);
+
+            instances.push(ResponseInstance {
+                first_aux,
+                party_seeds,
+                masked_input,
+                messages,
+                commitment,
+                message_hash_key,
+            })
+        }
+
+        Response {
+            excluded_root_seeds,
+            excluded_message_hashes,
+            instances,
+        }
     }
 }
