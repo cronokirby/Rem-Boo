@@ -130,8 +130,59 @@ impl RngCore for PRNG {
 
 impl CryptoRng for PRNG {}
 
+fn random_mod<R: RngCore>(rng: &mut R, n: u8) -> u8 {
+    let mask = n.checked_next_power_of_two().unwrap_or(0).wrapping_sub(1);
+    loop {
+        let mut bytes = [0u8; 1];
+        rng.fill_bytes(&mut bytes);
+        let c = bytes[0] & mask;
+        if c < n {
+            return c;
+        }
+    }
+}
+
+fn random_subset<R: RngCore>(rng: &mut R, m: u8, tau: u8) -> Vec<bool> {
+    assert!(tau < m);
+    let mut out = vec![false; m as usize];
+    let mut numbers: Vec<usize> = (0..m as usize).collect();
+    for i in 0..tau {
+        numbers.swap(random_mod(rng, m - i) as usize, (m - 1) as usize);
+    }
+    for &selected in &numbers[(m - tau) as usize..] {
+        out[selected] = true;
+    }
+    out
+}
+
+/// Select a random subset of size tau from m, and then a random index mod n for each element.
+///
+/// This requires that all the values fit within a single byte, which will be the case,
+/// for the security parameters we target.
+pub fn random_selections<R: RngCore>(
+    rng: &mut R,
+    m: usize,
+    tau: usize,
+    n: usize,
+) -> Vec<Option<usize>> {
+    let selected = random_subset(rng, u8::try_from(m).unwrap(), u8::try_from(tau).unwrap());
+    let nu8 = u8::try_from(n).unwrap();
+    selected
+        .into_iter()
+        .map(|x| {
+            if x {
+                Some(random_mod(rng, nu8) as usize)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod test {
+    use rand_core::OsRng;
+
     use super::*;
 
     #[test]
@@ -148,5 +199,14 @@ mod test {
         let mut data2 = [0u8; 2 * BUF_LEN];
         rng2.fill_bytes(&mut data2);
         assert_eq!(data1, data2);
+    }
+
+    #[test]
+    fn test_random_subset_has_right_size() {
+        let m = 218;
+        let tau = 65;
+        let subset = random_subset(&mut OsRng, m, tau);
+        assert_eq!(subset.len(), m as usize);
+        assert_eq!(subset.iter().filter(|x| **x).count(), tau as usize);
     }
 }
