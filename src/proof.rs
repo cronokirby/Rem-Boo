@@ -1,4 +1,4 @@
-use std::{iter, mem};
+use std::{iter, mem, ops::Mul};
 
 use bincode::{config, encode_into_std_write, Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
@@ -6,14 +6,15 @@ use rand_core::{CryptoRng, RngCore};
 use crate::{
     buffer::{MultiBuffer, MultiQueue},
     bytecode::{BinaryInstruction, Instruction, Location, Program},
-    rng::{Seed, PRNG},
+    constants,
+    rng::{random_selections, Seed, PRNG},
 };
 
-enum Error {
+pub enum Error {
     BadProgram,
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// An Interpreter running programs, creating an execution trace.
 ///
@@ -606,4 +607,49 @@ impl Prover {
             instances,
         }
     }
+}
+
+pub struct Proof {
+    commitment: Hash,
+    response: Response,
+}
+
+pub fn prove<R: RngCore + CryptoRng>(
+    rng: &mut R,
+    program: &Program,
+    public: &MultiBuffer,
+    private: &MultiBuffer,
+    ctx: &[u8],
+) -> Result<Proof> {
+    let prover = Prover::setup(
+        rng,
+        constants::FULL_SET_COUNT,
+        constants::PARTY_COUNT,
+        program,
+        public,
+        private,
+    )?;
+
+    let commitment = prover.commitment();
+
+    let mut hasher = blake3::Hasher::new_derive_key(constants::CHALLENGE_CONTEXT);
+    encode_into_std_write(program, &mut hasher, config::standard()).unwrap();
+    encode_into_std_write(public, &mut hasher, config::standard()).unwrap();
+    encode_into_std_write(commitment, &mut hasher, config::standard()).unwrap();
+    encode_into_std_write(ctx, &mut hasher, config::standard()).unwrap();
+
+    let mut prng = PRNG::from_hasher(hasher);
+    let challenge = random_selections(
+        &mut prng,
+        constants::FULL_SET_COUNT,
+        constants::SUBSET_COUNT,
+        constants::PARTY_COUNT,
+    );
+
+    let response = prover.response(&challenge);
+
+    Ok(Proof {
+        commitment,
+        response,
+    })
 }
