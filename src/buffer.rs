@@ -64,6 +64,30 @@ impl MultiBuffer {
     }
 }
 
+/// Represents a queue yielding new items.
+///
+/// The main use in this trait is both generalizing over when we need an
+/// actual queue, and when we need a fake queue yielding 0. This is used
+/// to provide the auxilary messages not part of the simulation. The prover
+/// doesn't need these, and wants a queue which doesn't impact the simulation,
+/// while the verifier wants real messages provided to it inside the proof.
+pub trait Queue {
+    fn next_u64(&mut self) -> u64;
+}
+
+/// Represents a queue which always yields 0.
+///
+/// This means that xoring with the result of the queue does nothing,
+/// which is what the prover wants to do.
+#[derive(Clone, Copy, Debug)]
+pub struct NullQueue;
+
+impl Queue for NullQueue {
+    fn next_u64(&mut self) -> u64 {
+        0
+    }
+}
+
 /// A wrapper over a MultiBuffer providing a FIFO queue.
 ///
 /// This is useful in situations where we need to read the elements of a buffer
@@ -79,9 +103,11 @@ impl<'a> MultiQueue<'a> {
     pub fn new(buffer: &'a MultiBuffer) -> Self {
         Self { buffer, i_u64: 0 }
     }
+}
 
+impl<'a> Queue for MultiQueue<'a> {
     /// Read the next u64 value from the queue.
-    pub fn next_u64(&mut self) -> u64 {
+    fn next_u64(&mut self) -> u64 {
         let out = self.buffer.u64s[self.i_u64];
         self.i_u64 += 1;
         out

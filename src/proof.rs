@@ -1,10 +1,10 @@
-use std::{iter, mem, ops::Mul};
+use std::{iter, mem};
 
 use bincode::{config, encode_into_std_write, Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    buffer::{MultiBuffer, MultiQueue},
+    buffer::{MultiBuffer, MultiQueue, Queue},
     bytecode::{BinaryInstruction, Instruction, Location, Program},
     constants,
     rng::{random_selections, Seed, PRNG},
