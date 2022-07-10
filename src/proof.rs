@@ -4,7 +4,7 @@ use bincode::{config, encode_into_std_write, Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
 
 use crate::{
-    buffer::{MultiBuffer, MultiQueue, Queue},
+    buffer::{MultiBuffer, MultiQueue, NullQueue, Queue},
     bytecode::{BinaryInstruction, Instruction, Location, Program},
     constants,
     rng::{random_selections, Seed, PRNG},
@@ -173,7 +173,7 @@ impl<'a> Party<'a> {
     }
 }
 
-struct Simulator<'a> {
+struct Simulator<'a, Q> {
     public: &'a MultiBuffer,
     /// For each party, we hold:
     /// - Their RNG
@@ -182,15 +182,17 @@ struct Simulator<'a> {
     /// - The outgoing messages
     parties: Vec<(PRNG, MultiQueue<'a>, Party<'a>, MultiBuffer)>,
     input_party: Party<'a>,
+    extra_messages: Q,
 }
 
-impl<'a> Simulator<'a> {
+impl<'a, Q: Queue> Simulator<'a, Q> {
     pub fn new(
         public: &'a MultiBuffer,
         masked_input: &'a MultiBuffer,
         rngs: Vec<PRNG>,
         and_bits: &'a [MultiBuffer],
         masks: &'a [MultiBuffer],
+        extra_messages: Q,
     ) -> Self {
         let mut parties = Vec::with_capacity(rngs.len());
         for ((rng, and_bits), masks) in rngs
@@ -210,6 +212,7 @@ impl<'a> Simulator<'a> {
             public,
             parties,
             input_party,
+            extra_messages,
         }
     }
 
@@ -487,7 +490,8 @@ impl Prover {
             }
 
             // Then, run the simulation
-            let mut simulator = Simulator::new(public, &masked_input, prngs, &and_bits, &masks);
+            let mut simulator =
+                Simulator::new(public, &masked_input, prngs, &and_bits, &masks, NullQueue);
             if !simulator.run(program) {
                 return Err(Error::BadProgram);
             }
