@@ -56,11 +56,42 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
+    fn and64(&mut self, loc: Location) -> Result<()> {
+        match loc {
+            Location::Top => {
+                let left = self.pop_u64()?;
+                let right = self.pop_u64()?;
+                let out = left & right;
+                self.stack.push_u64(out);
+                self.trace.push_u64(out);
+                Ok(())
+            }
+            Location::Public(i) => {
+                let a = self.public.read_u64(i).ok_or(Error::BadProgram)?;
+                let b = self.pop_u64()?;
+                self.stack.push_u64(a & b);
+                Ok(())
+            }
+        }
+    }
+
+    fn xor64(&mut self, loc: Location) -> Result<()> {
+        match loc {
+            Location::Top => {
+                let left = self.pop_u64()?;
+                let right = self.pop_u64()?;
+                self.stack.push_u64(left ^ right);
+                Ok(())
+            }
+            Location::Public(_) => Ok(()),
+        }
+    }
+
     fn instruction(&mut self, instr: &Instruction) -> Result<()> {
         match instr {
-            Instruction::Binary(instr, location) => match location {
-                Location::Public(_) => self.pop_u64().map(|_| ()),
-                Location::Top => self.binary(instr),
+            Instruction::Binary(instr, location) => match instr {
+                BinaryInstruction::Xor => self.xor64(*location),
+                BinaryInstruction::And => self.and64(*location),
             },
             Instruction::AssertEq(_) => self.pop_u64().map(|_| ()),
             Instruction::PushTop => {
