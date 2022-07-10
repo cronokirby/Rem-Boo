@@ -414,11 +414,6 @@ impl Prover {
         public: &MultiBuffer,
         private: &MultiBuffer,
     ) -> Result<Self> {
-        // First, execute the program to get a trace of the and bits.
-        let mut interpreter = Interpreter::new(public, private);
-        interpreter.run(program)?;
-        let trace = interpreter.trace();
-
         let mut root_seeds = Vec::with_capacity(m);
         for _ in 0..m {
             root_seeds.push(Seed::random(rng));
@@ -453,6 +448,23 @@ impl Prover {
                 prngs.push(PRNG::seeded(&Seed::random(&mut prng)));
             }
 
+            // Next, we want to setup the execution trace.
+            // First, we need to extract out the input masks:
+            let mut masks = Vec::with_capacity(n);
+            for prng in &mut prngs {
+                let mask = MultiBuffer::random(prng, private.len_u64());
+                masks.push(mask);
+            }
+            let mut global_mask = masks[0].clone();
+            for mask in &masks[1..] {
+                global_mask.xor(mask);
+            }
+
+            // Second, execute the program to get a trace of the and bits.
+            let mut interpreter = Interpreter::new(public, &global_mask);
+            interpreter.run(program)?;
+            let trace = interpreter.trace();
+
             // Now, generate the and bits. The first party doesn't get random bits.
             let mut and_bits = Vec::with_capacity(n);
             and_bits.push(trace.clone());
@@ -480,14 +492,9 @@ impl Prover {
             }
 
             // Next we need to run the simulation.
-            // First, prepare the masks for each party, and the masked input
+            // First, prepare the masked input.
             let mut masked_input = private.clone();
-            let mut masks = Vec::with_capacity(n);
-            for prng in &mut prngs {
-                let mask = MultiBuffer::random(prng, masked_input.len_u64());
-                masked_input.xor(&mask);
-                masks.push(mask);
-            }
+            masked_input.xor(&global_mask);
 
             // Then, run the simulation
             let mut simulator =
@@ -620,10 +627,10 @@ pub struct Proof {
 
 pub fn prove<R: RngCore + CryptoRng>(
     rng: &mut R,
+    ctx: &[u8],
     program: &Program,
     public: &MultiBuffer,
     private: &MultiBuffer,
-    ctx: &[u8],
 ) -> Result<Proof> {
     let prover = Prover::setup(
         rng,
