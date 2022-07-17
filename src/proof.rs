@@ -396,7 +396,7 @@ impl<'a> State<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Encode, Decode)]
+#[derive(Clone, Copy, Default, Debug, Encode, Decode, PartialEq)]
 struct Hash([u8; blake3::OUT_LEN]);
 
 impl From<blake3::Hash> for Hash {
@@ -409,6 +409,7 @@ impl From<blake3::Hash> for Hash {
 struct ResponseInstance {
     first_aux: Option<MultiBuffer>,
     party_seeds: Vec<Seed>,
+    commitment_keys: Vec<CommitmentKey>,
     masked_input: MultiBuffer,
     messages: MultiBuffer,
     commitment: Commitment,
@@ -627,6 +628,8 @@ impl Prover {
             let (aux, mut states) = mem::take(&mut self.all_states[i]);
             let first_aux = if j == 0 { None } else { Some(aux) };
             states.remove(j);
+            let mut commitment_keys = mem::take(&mut self.all_commitment_keys[i]);
+            commitment_keys.remove(j);
             let party_seeds = states;
             let masked_input = mem::take(&mut self.all_masked_inputs[i]);
             let messages = mem::take(&mut self.all_messages[i][j]);
@@ -636,6 +639,7 @@ impl Prover {
             instances.push(ResponseInstance {
                 first_aux,
                 party_seeds,
+                commitment_keys,
                 masked_input,
                 messages,
                 commitment,
@@ -694,4 +698,238 @@ pub fn prove<R: RngCore + CryptoRng>(
         commitment,
         response,
     })
+}
+
+pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof) -> bool {
+    let mut hasher = blake3::Hasher::new_derive_key(constants::CHALLENGE_CONTEXT);
+    encode_into_std_write(program, &mut hasher, config::standard()).unwrap();
+    encode_into_std_write(public, &mut hasher, config::standard()).unwrap();
+    encode_into_std_write(proof.commitment, &mut hasher, config::standard()).unwrap();
+    encode_into_std_write(ctx, &mut hasher, config::standard()).unwrap();
+    let mut prng = PRNG::from_hasher(hasher);
+    let challenge = random_selections(
+        &mut prng,
+        constants::FULL_SET_COUNT,
+        constants::SUBSET_COUNT,
+        constants::PARTY_COUNT,
+    );
+    let n = constants::PARTY_COUNT;
+
+    // First calculate the commitment hashes
+    // First, do those for the excluded items
+    let mut commitment_hashes = vec![Hash::default(); constants::FULL_SET_COUNT];
+    for (hash, root_seed) in challenge
+        .iter()
+        .zip(commitment_hashes.iter_mut())
+        .filter_map(|(c, x)| if c.is_none() { Some(x) } else { None })
+        .zip(&proof.response.excluded_root_seeds)
+    {
+        let mut party_seeds = Vec::with_capacity(n);
+        let mut commitment_keys = Vec::with_capacity(n);
+        {
+            let mut prng = PRNG::seeded(root_seed);
+            for _ in 0..n {
+                party_seeds.push(Seed::random(&mut prng));
+                commitment_keys.push(CommitmentKey::random(&mut prng));
+            }
+        }
+
+        // Split party seeds into and seeds and prngs
+        let mut and_seeds = Vec::with_capacity(n);
+        let mut prngs = Vec::with_capacity(n);
+        for seed in &party_seeds {
+            let mut prng = PRNG::seeded(seed);
+            and_seeds.push(Seed::random(&mut prng));
+            prngs.push(PRNG::seeded(&Seed::random(&mut prng)));
+        }
+
+        // Next, we want to setup the execution trace.
+        // First, we need to extract out the input masks:
+        let mut masks = Vec::with_capacity(n);
+        for prng in &mut prngs {
+            let mask = MultiBuffer::random(prng, program.private_size as usize);
+            masks.push(mask);
+        }
+        let mut global_mask = masks[0].clone();
+        for mask in &masks[1..] {
+            global_mask.xor(mask);
+        }
+
+        // Second, execute the program to get a trace of the and bits.
+        let mut interpreter = Interpreter::new(public, &global_mask);
+        if interpreter.run(program).is_err() {
+            return false;
+        }
+        let trace = interpreter.trace();
+
+        // Now, generate the and bits. The first party doesn't get random bits.
+        let mut and_bits = Vec::with_capacity(n);
+        and_bits.push(trace.clone());
+        for seed in &and_seeds[1..] {
+            let mut prng = PRNG::seeded(seed);
+            let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
+            and_bits[0].xor(&aux);
+            and_bits.push(aux);
+        }
+
+        // Generate the state commitments
+        let mut commitments = Vec::with_capacity(n);
+        for (i, ((party_seed, aux), commitment_key)) in party_seeds
+            .iter()
+            .zip(and_bits.iter())
+            .zip(commitment_keys.iter())
+            .enumerate()
+        {
+            let state = if i == 0 {
+                State::WithAux(party_seed, aux)
+            } else {
+                State::WithoutAux(party_seed)
+            };
+            commitments.push(state.commit(commitment_key));
+        }
+
+        *hash = {
+            let mut hasher = blake3::Hasher::new();
+            encode_into_std_write(&commitments, &mut hasher, config::standard())
+                .expect("failed to call hash function");
+            hasher.finalize().into()
+        };
+    }
+
+    // Next, do the included items
+    for ((j, hash), instance) in challenge
+        .iter()
+        .zip(commitment_hashes.iter_mut())
+        .filter_map(|(c, x)| c.map(|c| (c, x)))
+        .zip(&proof.response.instances)
+    {
+        let mut commitments = vec![Commitment::default(); n];
+
+        for (i, commitment) in commitments.iter_mut().enumerate() {
+            if i == j {
+                *commitment = instance.commitment;
+            } else {
+                let state = if i == 0 {
+                    if instance.first_aux.is_none() {
+                        return false;
+                    }
+                    State::WithAux(
+                        &instance.party_seeds[i],
+                        instance.first_aux.as_ref().unwrap(),
+                    )
+                } else {
+                    State::WithoutAux(&instance.party_seeds[i])
+                };
+                let index = if i < j { i } else { i + 1 };
+                *commitment = state.commit(&instance.commitment_keys[index]);
+            }
+        }
+
+        *hash = {
+            let mut hasher = blake3::Hasher::new();
+            encode_into_std_write(&commitments, &mut hasher, config::standard())
+                .expect("failed to call hash function");
+            hasher.finalize().into()
+        };
+    }
+
+    // Next, do the message hashes
+    let mut message_hashes = vec![Hash::default(); constants::FULL_SET_COUNT];
+    // First, copy in the excluded hashes
+    for (out_hash, in_hash) in challenge
+        .iter()
+        .zip(message_hashes.iter_mut())
+        .filter_map(|(c, m)| c.map(|_| m))
+        .zip(&proof.response.excluded_message_hashes)
+    {
+        *out_hash = *in_hash;
+    }
+    // Finally, reconstruct the messages for the included parts
+    for ((j, hash), instance) in challenge
+        .iter()
+        .zip(message_hashes.iter_mut())
+        .filter_map(|(c, m)| c.map(|j| (j, m)))
+        .zip(&proof.response.instances)
+    {
+        // Split party seeds into and seeds and prngs
+        let mut and_seeds = Vec::with_capacity(n);
+        let mut prngs = Vec::with_capacity(n);
+        for seed in &instance.party_seeds {
+            let mut prng = PRNG::seeded(seed);
+            and_seeds.push(Seed::random(&mut prng));
+            prngs.push(PRNG::seeded(&Seed::random(&mut prng)));
+        }
+        // Next, we want to setup the execution trace.
+        // First, we need to extract out the input masks:
+        let mut masks = Vec::with_capacity(n);
+        for prng in &mut prngs {
+            let mask = MultiBuffer::random(prng, program.private_size as usize);
+            masks.push(mask);
+        }
+        let mut global_mask = masks[0].clone();
+        for mask in &masks[1..] {
+            global_mask.xor(mask);
+        }
+
+        // Second, execute the program to get a trace of the and bits.
+        let mut interpreter = Interpreter::new(public, &global_mask);
+        if interpreter.run(program).is_err() {
+            return false;
+        }
+        let trace = interpreter.trace();
+
+        // Now, generate the and bits. The first party doesn't get random bits.
+        let mut and_bits = Vec::with_capacity(n);
+        and_bits.push(trace);
+        for seed in &and_seeds[1..] {
+            let mut prng = PRNG::seeded(seed);
+            let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
+            and_bits[0].xor(&aux);
+            and_bits.push(aux);
+        }
+
+        let mut simulator = Simulator::new(
+            public,
+            &instance.masked_input,
+            prngs,
+            &and_bits,
+            &masks,
+            MultiQueue::new(&instance.messages),
+        );
+        if !simulator.run(program) {
+            return false;
+        }
+        let mut messages = simulator.messages();
+        messages.insert(j, instance.messages.clone());
+
+        *hash = {
+            let mut hasher = blake3::Hasher::new_keyed(&instance.message_hash_key);
+            encode_into_std_write(&instance.masked_input, &mut hasher, config::standard())
+                .expect("failed to call hash function");
+            encode_into_std_write(&messages, &mut hasher, config::standard())
+                .expect("failed to call hash function");
+            hasher.finalize().into()
+        }
+    }
+
+    let hash0: Hash = {
+        let mut hasher = blake3::Hasher::new();
+        encode_into_std_write(&commitment_hashes, &mut hasher, config::standard())
+            .expect("failed to call hash function");
+        hasher.finalize().into()
+    };
+    let hash1: Hash = {
+        let mut hasher = blake3::Hasher::new();
+        encode_into_std_write(&message_hashes, &mut hasher, config::standard())
+            .expect("failed to call hash function");
+        hasher.finalize().into()
+    };
+    let commitment: Hash = {
+        let mut hasher = blake3::Hasher::new();
+        encode_into_std_write((hash0, hash1), &mut hasher, config::standard())
+            .expect("failed to call hash function");
+        hasher.finalize().into()
+    };
+
+    commitment == proof.commitment
 }
