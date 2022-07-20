@@ -8,7 +8,7 @@ use crate::{
     buffer::{MultiBuffer, MultiQueue, NullQueue, Queue},
     bytecode::{BinaryInstruction, Instruction, Location, Program},
     constants,
-    rng::{random_selections, Seed, PRNG},
+    rng::{random_selections, Seed, Prng},
 };
 
 #[derive(Debug)]
@@ -127,7 +127,7 @@ impl<'a> Interpreter<'a> {
 ///
 /// Every party, except one, will sample these bits randomly.
 /// The other parties
-fn create_and_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> Vec<MultiBuffer> {
+fn create_and_bits(prngs: &mut [Prng], and_trace: &MultiBuffer) -> Vec<MultiBuffer> {
     let mut out = vec![MultiBuffer::new(); prngs.len() + 1];
     for &(mut x) in and_trace.iter_u64() {
         for (i, prng) in prngs.iter_mut().enumerate() {
@@ -176,7 +176,7 @@ impl<'a> Party<'a> {
         self.stack.push_u64(imm & b);
     }
 
-    pub fn and64(&mut self, rng: &mut PRNG, and_bits: &mut MultiQueue, za: u64, zb: u64) -> u64 {
+    pub fn and64(&mut self, rng: &mut Prng, and_bits: &mut MultiQueue, za: u64, zb: u64) -> u64 {
         let a = self.stack.pop_u64().unwrap();
         let b = self.stack.pop_u64().unwrap();
         let c = rng.next_u64();
@@ -215,7 +215,7 @@ struct Simulator<'a, Q> {
     /// - A queue for their and bits
     /// - The party itself
     /// - The outgoing messages
-    parties: Vec<(PRNG, MultiQueue<'a>, Party<'a>, MultiBuffer)>,
+    parties: Vec<(Prng, MultiQueue<'a>, Party<'a>, MultiBuffer)>,
     input_party: Party<'a>,
     extra_messages: Q,
 }
@@ -224,7 +224,7 @@ impl<'a, Q: Queue + Debug> Simulator<'a, Q> {
     pub fn new(
         public: &'a MultiBuffer,
         masked_input: &'a MultiBuffer,
-        rngs: Vec<PRNG>,
+        rngs: Vec<Prng>,
         and_bits: &'a [MultiBuffer],
         masks: &'a [MultiBuffer],
         extra_messages: Q,
@@ -470,7 +470,7 @@ impl Prover {
             let mut party_seeds = Vec::with_capacity(n);
             let mut commitment_keys = Vec::with_capacity(n);
             {
-                let mut prng = PRNG::seeded(root_seed);
+                let mut prng = Prng::seeded(root_seed);
                 for _ in 0..n {
                     party_seeds.push(Seed::random(&mut prng));
                     commitment_keys.push(CommitmentKey::random(&mut prng));
@@ -481,9 +481,9 @@ impl Prover {
             let mut and_seeds = Vec::with_capacity(n);
             let mut prngs = Vec::with_capacity(n);
             for seed in &party_seeds {
-                let mut prng = PRNG::seeded(seed);
+                let mut prng = Prng::seeded(seed);
                 and_seeds.push(Seed::random(&mut prng));
-                prngs.push(PRNG::seeded(&Seed::random(&mut prng)));
+                prngs.push(Prng::seeded(&Seed::random(&mut prng)));
             }
 
             // Next, we want to setup the execution trace.
@@ -507,7 +507,7 @@ impl Prover {
             let mut and_bits = Vec::with_capacity(n);
             and_bits.push(trace.clone());
             for seed in &and_seeds[1..] {
-                let mut prng = PRNG::seeded(seed);
+                let mut prng = Prng::seeded(seed);
                 let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
                 and_bits[0].xor(&aux);
                 and_bits.push(aux);
@@ -691,7 +691,7 @@ pub fn prove<R: RngCore + CryptoRng>(
     encode_into_std_write(commitment, &mut hasher, config::standard()).unwrap();
     encode_into_std_write(ctx, &mut hasher, config::standard()).unwrap();
 
-    let mut prng = PRNG::from_hasher(hasher);
+    let mut prng = Prng::from_hasher(hasher);
     let challenge = random_selections(
         &mut prng,
         constants::FULL_SET_COUNT,
@@ -713,7 +713,7 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
     encode_into_std_write(public, &mut hasher, config::standard()).unwrap();
     encode_into_std_write(proof.commitment, &mut hasher, config::standard()).unwrap();
     encode_into_std_write(ctx, &mut hasher, config::standard()).unwrap();
-    let mut prng = PRNG::from_hasher(hasher);
+    let mut prng = Prng::from_hasher(hasher);
     let challenge = random_selections(
         &mut prng,
         constants::FULL_SET_COUNT,
@@ -736,7 +736,7 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         let mut party_seeds = Vec::with_capacity(n);
         let mut commitment_keys = Vec::with_capacity(n);
         {
-            let mut prng = PRNG::seeded(root_seed);
+            let mut prng = Prng::seeded(root_seed);
             for _ in 0..n {
                 party_seeds.push(Seed::random(&mut prng));
                 commitment_keys.push(CommitmentKey::random(&mut prng));
@@ -747,9 +747,9 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         let mut and_seeds = Vec::with_capacity(n);
         let mut prngs = Vec::with_capacity(n);
         for seed in &party_seeds {
-            let mut prng = PRNG::seeded(seed);
+            let mut prng = Prng::seeded(seed);
             and_seeds.push(Seed::random(&mut prng));
-            prngs.push(PRNG::seeded(&Seed::random(&mut prng)));
+            prngs.push(Prng::seeded(&Seed::random(&mut prng)));
         }
 
         // Next, we want to setup the execution trace.
@@ -777,7 +777,7 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         let mut and_bits = Vec::with_capacity(n);
         and_bits.push(trace.clone());
         for seed in &and_seeds[1..] {
-            let mut prng = PRNG::seeded(seed);
+            let mut prng = Prng::seeded(seed);
             let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
             and_bits[0].xor(&aux);
             and_bits.push(aux);
@@ -868,9 +868,9 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         let mut and_seeds = Vec::with_capacity(n);
         let mut prngs = Vec::with_capacity(n);
         for seed in &instance.party_seeds {
-            let mut prng = PRNG::seeded(seed);
+            let mut prng = Prng::seeded(seed);
             and_seeds.push(Seed::random(&mut prng));
-            prngs.push(PRNG::seeded(&Seed::random(&mut prng)));
+            prngs.push(Prng::seeded(&Seed::random(&mut prng)));
         }
         // Next, we want to setup the execution trace.
         // First, we need to extract out the input masks:
@@ -889,7 +889,7 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
                     continue;
                 }
             }
-            let mut prng = PRNG::seeded(seed);
+            let mut prng = Prng::seeded(seed);
             let aux = MultiBuffer::random(&mut prng, and_size);
             and_bits.push(aux);
         }

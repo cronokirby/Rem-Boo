@@ -31,7 +31,7 @@ const BUF_LEN: usize = 64;
 ///
 /// When generating a single bit, an entire byte of randomness is consumed,
 /// so generating 32 bits will not yield the same result as generating a u32.
-pub struct PRNG {
+pub struct Prng {
     /// The reader used to generate new pseudo-random bytes.
     reader: blake3::OutputReader,
     /// The buffer to hold a partially consumed output from the hash.
@@ -40,19 +40,19 @@ pub struct PRNG {
     used: usize,
 }
 
-impl std::fmt::Debug for PRNG {
+impl std::fmt::Debug for Prng {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PRNG").finish()
     }
 }
 
-impl PRNG {
+impl Prng {
     fn fill_buf(&mut self) {
         self.reader.fill(&mut self.buf)
     }
 }
 
-impl PRNG {
+impl Prng {
     pub fn seeded(seed: &Seed) -> Self {
         // We extend the seed to an arbitrary stream of bits, with some domain separation.
         let mut hasher = blake3::Hasher::new_keyed(&seed.0);
@@ -90,7 +90,7 @@ impl PRNG {
     }
 }
 
-impl RngCore for PRNG {
+impl RngCore for Prng {
     fn next_u32(&mut self) -> u32 {
         let mut out_bytes = [0u8; 4];
         self.fill_bytes(&mut out_bytes);
@@ -134,7 +134,7 @@ impl RngCore for PRNG {
     }
 }
 
-impl CryptoRng for PRNG {}
+impl CryptoRng for Prng {}
 
 fn random_mod<R: RngCore>(rng: &mut R, n: u8) -> u8 {
     let mask = n.checked_next_power_of_two().unwrap_or(0).wrapping_sub(1);
@@ -194,8 +194,8 @@ mod test {
     #[test]
     fn test_prng_reproducability() {
         let seed = Seed([0xAB; SEED_LEN]);
-        let mut rng1 = PRNG::seeded(&seed);
-        let mut rng2 = PRNG::seeded(&seed);
+        let mut rng1 = Prng::seeded(&seed);
+        let mut rng2 = Prng::seeded(&seed);
         assert_eq!(rng1.next_u8(), rng2.next_u8());
         assert_eq!(rng1.next_u16(), rng2.next_u16());
         assert_eq!(rng1.next_u32(), rng2.next_u32());
