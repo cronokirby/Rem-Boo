@@ -961,7 +961,10 @@ mod test {
     use super::*;
     use rand_core::OsRng;
 
-    use crate::{buffer::MultiBuffer, bytecode::Program};
+    use crate::{
+        buffer::MultiBuffer, bytecode::BinaryInstruction::*, bytecode::Instruction::*,
+        bytecode::Location::*, bytecode::Program,
+    };
 
     fn run_instance(
         ctx: &[u8],
@@ -988,6 +991,20 @@ mod test {
         };
         let public = MultiBuffer::new();
         let private = MultiBuffer::new();
+        assert_instance(b"context", &program, &public, &private)
+    }
+
+    #[test]
+    fn test_single_assertion() {
+        let program = Program {
+            public_size: 1,
+            private_size: 1,
+            instructions: vec![PushPrivate(0), AssertEq(Public(0))],
+        };
+        let mut public = MultiBuffer::new();
+        public.push_u64(0xDEADBEEF);
+        let mut private = MultiBuffer::new();
+        private.push_u64(0xDEADBEEF);
         assert_instance(b"context", &program, &public, &private)
     }
 }
