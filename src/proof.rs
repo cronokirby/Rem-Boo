@@ -1027,4 +1027,39 @@ mod test {
         private.push_u64(0b11100);
         assert_instance(b"context", &program, &public, &private)
     }
+
+    #[test]
+    fn test_and() {
+        let program = Program {
+            public_size: 1,
+            private_size: 2,
+            instructions: vec![
+                PushPrivate(0),
+                PushPrivate(1),
+                Binary(And, Top),
+                AssertEq(Public(0)),
+            ],
+        };
+        let mut public = MultiBuffer::new();
+        public.push_u64(0b00100);
+        let mut private = MultiBuffer::new();
+        private.push_u64(0b00111);
+        private.push_u64(0b11100);
+        assert_instance(b"context", &program, &public, &private)
+    }
+
+    #[test]
+    fn test_and_public() {
+        let program = Program {
+            public_size: 2,
+            private_size: 1,
+            instructions: vec![PushPrivate(0), Binary(And, Public(0)), AssertEq(Public(1))],
+        };
+        let mut public = MultiBuffer::new();
+        public.push_u64(0b0011);
+        public.push_u64(0b0001);
+        let mut private = MultiBuffer::new();
+        private.push_u64(0b1101);
+        assert_instance(b"context", &program, &public, &private)
+    }
 }
