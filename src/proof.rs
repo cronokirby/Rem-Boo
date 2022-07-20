@@ -330,7 +330,6 @@ impl<'a, Q: Queue + Debug> Simulator<'a, Q> {
             Instruction::PushTop => self.push_top64(),
             Instruction::PushPrivate(i) => self.push_priv64(*i),
         };
-        dbg!((instr, self));
         true
     }
 
@@ -503,7 +502,6 @@ impl Prover {
             let mut interpreter = Interpreter::new(public, &global_mask);
             interpreter.run(program)?;
             let trace = interpreter.trace();
-            dbg!(&trace);
 
             // Now, generate the and bits. The first party doesn't get random bits.
             let mut and_bits = Vec::with_capacity(n);
@@ -514,7 +512,6 @@ impl Prover {
                 and_bits[0].xor(&aux);
                 and_bits.push(aux);
             }
-            dbg!(("prover", &and_bits));
 
             // Generate the state commitments
             let mut commitments = Vec::with_capacity(n);
@@ -536,7 +533,6 @@ impl Prover {
             // First, prepare the masked input.
             let mut masked_input = private.clone();
             masked_input.xor(&global_mask);
-            dbg!(("prover", &masked_input));
 
             // Then, run the simulation
             let mut simulator =
@@ -574,21 +570,18 @@ impl Prover {
             all_messages.push(messages);
         }
 
-        dbg!(("prover", &commitment_hashes));
         let hash0: Hash = {
             let mut hasher = blake3::Hasher::new();
             encode_into_std_write(&commitment_hashes, &mut hasher, config::standard())
                 .expect("failed to call hash function");
             hasher.finalize().into()
         };
-        dbg!(("prover", &message_hashes));
         let hash1: Hash = {
             let mut hasher = blake3::Hasher::new();
             encode_into_std_write(&message_hashes, &mut hasher, config::standard())
                 .expect("failed to call hash function");
             hasher.finalize().into()
         };
-        dbg!(("prover", &hash0, &hash1));
         let commitment: Hash = {
             let mut hasher = blake3::Hasher::new();
             encode_into_std_write((hash0, hash1), &mut hasher, config::standard())
@@ -705,7 +698,6 @@ pub fn prove<R: RngCore + CryptoRng>(
         constants::SUBSET_COUNT,
         constants::PARTY_COUNT,
     );
-    dbg!(("prover", &challenge));
 
     let response = prover.response(&challenge);
 
@@ -716,7 +708,6 @@ pub fn prove<R: RngCore + CryptoRng>(
 }
 
 pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof) -> bool {
-    dbg!("verifier", proof);
     let mut hasher = blake3::Hasher::new_derive_key(constants::CHALLENGE_CONTEXT);
     encode_into_std_write(program, &mut hasher, config::standard()).unwrap();
     encode_into_std_write(public, &mut hasher, config::standard()).unwrap();
@@ -729,7 +720,6 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         constants::SUBSET_COUNT,
         constants::PARTY_COUNT,
     );
-    dbg!(("verifier", &challenge));
     let n = constants::PARTY_COUNT;
 
     let mut and_size = 0;
@@ -903,7 +893,6 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
             let aux = MultiBuffer::random(&mut prng, and_size);
             and_bits.push(aux);
         }
-        dbg!(("verifier", &and_bits));
 
         let mut simulator = Simulator::new(
             public,
@@ -914,7 +903,6 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
             MultiQueue::new(&instance.messages),
         );
         if !simulator.run(program) {
-            dbg!("simulator failed");
             return false;
         }
         let mut messages = simulator.messages();
@@ -930,21 +918,18 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         }
     }
 
-    dbg!(("verifier", &commitment_hashes));
     let hash0: Hash = {
         let mut hasher = blake3::Hasher::new();
         encode_into_std_write(&commitment_hashes, &mut hasher, config::standard())
             .expect("failed to call hash function");
         hasher.finalize().into()
     };
-    dbg!(("verifier", &message_hashes));
     let hash1: Hash = {
         let mut hasher = blake3::Hasher::new();
         encode_into_std_write(&message_hashes, &mut hasher, config::standard())
             .expect("failed to call hash function");
         hasher.finalize().into()
     };
-    dbg!(("verifier", &hash0, &hash1));
     let commitment: Hash = {
         let mut hasher = blake3::Hasher::new();
         encode_into_std_write((hash0, hash1), &mut hasher, config::standard())
@@ -952,7 +937,6 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         hasher.finalize().into()
     };
 
-    dbg!(&commitment, &proof.commitment);
     commitment == proof.commitment
 }
 
