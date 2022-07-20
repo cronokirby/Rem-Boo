@@ -8,7 +8,7 @@ use crate::{
     buffer::{MultiBuffer, MultiQueue, NullQueue, Queue},
     bytecode::{BinaryInstruction, Instruction, Location, Program},
     constants,
-    rng::{random_selections, Seed, Prng},
+    rng::{random_selections, Prng, Seed},
 };
 
 #[derive(Debug)]
@@ -42,20 +42,6 @@ impl<'a> Interpreter<'a> {
 
     fn pop_u64(&mut self) -> Result<u64> {
         self.stack.pop_u64().ok_or(Error::BadProgram)
-    }
-
-    fn binary(&mut self, instr: &BinaryInstruction) -> Result<()> {
-        let left = self.pop_u64()?;
-        let right = self.pop_u64()?;
-        match instr {
-            BinaryInstruction::Xor => self.stack.push_u64(left ^ right),
-            BinaryInstruction::And => {
-                let out = left & right;
-                self.trace.push_u64(out);
-                self.stack.push_u64(out);
-            }
-        }
-        Ok(())
     }
 
     fn and64(&mut self, loc: Location) -> Result<()> {
@@ -123,23 +109,6 @@ impl<'a> Interpreter<'a> {
     }
 }
 
-/// Create the and bits for each party.
-///
-/// Every party, except one, will sample these bits randomly.
-/// The other parties
-fn create_and_bits(prngs: &mut [Prng], and_trace: &MultiBuffer) -> Vec<MultiBuffer> {
-    let mut out = vec![MultiBuffer::new(); prngs.len() + 1];
-    for &(mut x) in and_trace.iter_u64() {
-        for (i, prng) in prngs.iter_mut().enumerate() {
-            let y = prng.next_u64();
-            out[i + 1].push_u64(x);
-            x ^= y;
-        }
-        out[0].push_u64(x);
-    }
-    out
-}
-
 /// Represents a single party in the simulated multi-party computation.
 ///
 /// This party can run a lot of the computation itself, but sometimes needs
@@ -194,10 +163,6 @@ impl<'a> Party<'a> {
         self.stack.push_u64(x);
     }
 
-    pub fn top64(&self) -> u64 {
-        self.stack.top_u64().unwrap()
-    }
-
     pub fn pop64(&mut self) -> u64 {
         self.stack.pop_u64().unwrap()
     }
@@ -230,11 +195,7 @@ impl<'a, Q: Queue + Debug> Simulator<'a, Q> {
         extra_messages: Q,
     ) -> Self {
         let mut parties = Vec::with_capacity(rngs.len());
-        for ((rng, and_bits), masks) in rngs
-            .into_iter()
-            .zip(and_bits.into_iter())
-            .zip(masks.into_iter())
-        {
+        for ((rng, and_bits), masks) in rngs.into_iter().zip(and_bits.iter()).zip(masks.iter()) {
             parties.push((
                 rng,
                 MultiQueue::new(and_bits),
@@ -431,7 +392,6 @@ struct Response {
 
 struct Prover {
     m: usize,
-    n: usize,
     commitment: Hash,
     root_seeds: Vec<Seed>,
     message_hashes: Vec<Hash>,
@@ -591,7 +551,6 @@ impl Prover {
 
         Ok(Prover {
             m,
-            n,
             commitment,
             root_seeds,
             message_hashes,
