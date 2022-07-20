@@ -40,6 +40,12 @@ pub struct PRNG {
     used: usize,
 }
 
+impl std::fmt::Debug for PRNG {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PRNG").finish()
+    }
+}
+
 impl PRNG {
     fn fill_buf(&mut self) {
         self.reader.fill(&mut self.buf)

@@ -92,6 +92,7 @@ impl Queue for NullQueue {
 ///
 /// This is useful in situations where we need to read the elements of a buffer
 /// in sequence.
+#[derive(Debug)]
 pub struct MultiQueue<'a> {
     buffer: &'a MultiBuffer,
     /// The next index to read a u64 from the buffer.

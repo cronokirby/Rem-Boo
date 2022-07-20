@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::{iter, mem};
 
 use bincode::{config, encode_into_std_write, Decode, Encode};
@@ -10,6 +11,7 @@ use crate::{
     rng::{random_selections, Seed, PRNG},
 };
 
+#[derive(Debug)]
 pub enum Error {
     BadProgram,
 }
@@ -143,6 +145,7 @@ fn create_and_bits(prngs: &mut [PRNG], and_trace: &MultiBuffer) -> Vec<MultiBuff
 /// This party can run a lot of the computation itself, but sometimes needs
 /// additional information from the outside. We drive the execution by
 /// calling specific methods on the party.
+#[derive(Debug)]
 struct Party<'a> {
     /// This party's share of the private input.
     private: &'a MultiBuffer,
@@ -204,6 +207,7 @@ impl<'a> Party<'a> {
     }
 }
 
+#[derive(Debug)]
 struct Simulator<'a, Q> {
     public: &'a MultiBuffer,
     /// For each party, we hold:
@@ -216,7 +220,7 @@ struct Simulator<'a, Q> {
     extra_messages: Q,
 }
 
-impl<'a, Q: Queue> Simulator<'a, Q> {
+impl<'a, Q: Queue + Debug> Simulator<'a, Q> {
     pub fn new(
         public: &'a MultiBuffer,
         masked_input: &'a MultiBuffer,
@@ -279,6 +283,7 @@ impl<'a, Q: Queue> Simulator<'a, Q> {
             messages.push_u64(mask);
             output ^= mask;
         }
+        output ^= self.extra_messages.next_u64();
         output == 0
     }
 
@@ -309,6 +314,7 @@ impl<'a, Q: Queue> Simulator<'a, Q> {
                     messages.push_u64(s_share);
                     zc ^= s_share;
                 }
+                zc ^= self.extra_messages.next_u64();
                 self.input_party.push64(zc);
             }
         }
@@ -324,6 +330,7 @@ impl<'a, Q: Queue> Simulator<'a, Q> {
             Instruction::PushTop => self.push_top64(),
             Instruction::PushPrivate(i) => self.push_priv64(*i),
         };
+        dbg!((instr, self));
         true
     }
 
@@ -496,6 +503,7 @@ impl Prover {
             let mut interpreter = Interpreter::new(public, &global_mask);
             interpreter.run(program)?;
             let trace = interpreter.trace();
+            dbg!(&trace);
 
             // Now, generate the and bits. The first party doesn't get random bits.
             let mut and_bits = Vec::with_capacity(n);
@@ -506,6 +514,7 @@ impl Prover {
                 and_bits[0].xor(&aux);
                 and_bits.push(aux);
             }
+            dbg!(("prover", &and_bits));
 
             // Generate the state commitments
             let mut commitments = Vec::with_capacity(n);
@@ -527,6 +536,7 @@ impl Prover {
             // First, prepare the masked input.
             let mut masked_input = private.clone();
             masked_input.xor(&global_mask);
+            dbg!(("prover", &masked_input));
 
             // Then, run the simulation
             let mut simulator =
@@ -564,18 +574,21 @@ impl Prover {
             all_messages.push(messages);
         }
 
+        dbg!(("prover", &commitment_hashes));
         let hash0: Hash = {
             let mut hasher = blake3::Hasher::new();
             encode_into_std_write(&commitment_hashes, &mut hasher, config::standard())
                 .expect("failed to call hash function");
             hasher.finalize().into()
         };
+        dbg!(("prover", &message_hashes));
         let hash1: Hash = {
             let mut hasher = blake3::Hasher::new();
             encode_into_std_write(&message_hashes, &mut hasher, config::standard())
                 .expect("failed to call hash function");
             hasher.finalize().into()
         };
+        dbg!(("prover", &hash0, &hash1));
         let commitment: Hash = {
             let mut hasher = blake3::Hasher::new();
             encode_into_std_write((hash0, hash1), &mut hasher, config::standard())
@@ -613,7 +626,7 @@ impl Prover {
             .iter()
             .zip(self.root_seeds.into_iter())
             .zip(self.message_hashes.into_iter())
-            .filter(|((included, _), _)| included.is_some())
+            .filter(|((included, _), _)| included.is_none())
             .for_each(|((_, root_seed), message_hashes)| {
                 excluded_root_seeds.push(root_seed);
                 excluded_message_hashes.push(message_hashes);
@@ -655,6 +668,7 @@ impl Prover {
     }
 }
 
+#[derive(Debug)]
 pub struct Proof {
     commitment: Hash,
     response: Response,
@@ -691,6 +705,7 @@ pub fn prove<R: RngCore + CryptoRng>(
         constants::SUBSET_COUNT,
         constants::PARTY_COUNT,
     );
+    dbg!(("prover", &challenge));
 
     let response = prover.response(&challenge);
 
@@ -701,6 +716,7 @@ pub fn prove<R: RngCore + CryptoRng>(
 }
 
 pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof) -> bool {
+    dbg!("verifier", proof);
     let mut hasher = blake3::Hasher::new_derive_key(constants::CHALLENGE_CONTEXT);
     encode_into_std_write(program, &mut hasher, config::standard()).unwrap();
     encode_into_std_write(public, &mut hasher, config::standard()).unwrap();
@@ -713,7 +729,10 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         constants::SUBSET_COUNT,
         constants::PARTY_COUNT,
     );
+    dbg!(("verifier", &challenge));
     let n = constants::PARTY_COUNT;
+
+    let mut and_size = 0;
 
     // First calculate the commitment hashes
     // First, do those for the excluded items
@@ -758,9 +777,11 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         // Second, execute the program to get a trace of the and bits.
         let mut interpreter = Interpreter::new(public, &global_mask);
         if interpreter.run(program).is_err() {
+            println!("interpreter failed (0)");
             return false;
         }
         let trace = interpreter.trace();
+        and_size = trace.len_u64();
 
         // Now, generate the and bits. The first party doesn't get random bits.
         let mut and_bits = Vec::with_capacity(n);
@@ -809,18 +830,19 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
             if i == j {
                 *commitment = instance.commitment;
             } else {
+                let index = if i < j { i } else { i - 1 };
                 let state = if i == 0 {
                     if instance.first_aux.is_none() {
+                        println!("first aux is none");
                         return false;
                     }
                     State::WithAux(
-                        &instance.party_seeds[i],
+                        &instance.party_seeds[index],
                         instance.first_aux.as_ref().unwrap(),
                     )
                 } else {
-                    State::WithoutAux(&instance.party_seeds[i])
+                    State::WithoutAux(&instance.party_seeds[index])
                 };
-                let index = if i < j { i } else { i + 1 };
                 *commitment = state.commit(&instance.commitment_keys[index]);
             }
         }
@@ -839,11 +861,12 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
     for (out_hash, in_hash) in challenge
         .iter()
         .zip(message_hashes.iter_mut())
-        .filter_map(|(c, m)| c.map(|_| m))
+        .filter_map(|(c, m)| if c.is_none() { Some(m) } else { None })
         .zip(&proof.response.excluded_message_hashes)
     {
         *out_hash = *in_hash;
     }
+
     // Finally, reconstruct the messages for the included parts
     for ((j, hash), instance) in challenge
         .iter()
@@ -866,27 +889,21 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
             let mask = MultiBuffer::random(prng, program.private_size as usize);
             masks.push(mask);
         }
-        let mut global_mask = masks[0].clone();
-        for mask in &masks[1..] {
-            global_mask.xor(mask);
-        }
-
-        // Second, execute the program to get a trace of the and bits.
-        let mut interpreter = Interpreter::new(public, &global_mask);
-        if interpreter.run(program).is_err() {
-            return false;
-        }
-        let trace = interpreter.trace();
 
         // Now, generate the and bits. The first party doesn't get random bits.
-        let mut and_bits = Vec::with_capacity(n);
-        and_bits.push(trace);
-        for seed in &and_seeds[1..] {
+        let mut and_bits = Vec::with_capacity(n - 1);
+        for (i, seed) in and_seeds[0..].iter().enumerate() {
+            if i == 0 {
+                if let Some(aux) = &instance.first_aux {
+                    and_bits.push(aux.clone());
+                    continue;
+                }
+            }
             let mut prng = PRNG::seeded(seed);
-            let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
-            and_bits[0].xor(&aux);
+            let aux = MultiBuffer::random(&mut prng, and_size);
             and_bits.push(aux);
         }
+        dbg!(("verifier", &and_bits));
 
         let mut simulator = Simulator::new(
             public,
@@ -897,6 +914,7 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
             MultiQueue::new(&instance.messages),
         );
         if !simulator.run(program) {
+            dbg!("simulator failed");
             return false;
         }
         let mut messages = simulator.messages();
@@ -912,18 +930,21 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         }
     }
 
+    dbg!(("verifier", &commitment_hashes));
     let hash0: Hash = {
         let mut hasher = blake3::Hasher::new();
         encode_into_std_write(&commitment_hashes, &mut hasher, config::standard())
             .expect("failed to call hash function");
         hasher.finalize().into()
     };
+    dbg!(("verifier", &message_hashes));
     let hash1: Hash = {
         let mut hasher = blake3::Hasher::new();
         encode_into_std_write(&message_hashes, &mut hasher, config::standard())
             .expect("failed to call hash function");
         hasher.finalize().into()
     };
+    dbg!(("verifier", &hash0, &hash1));
     let commitment: Hash = {
         let mut hasher = blake3::Hasher::new();
         encode_into_std_write((hash0, hash1), &mut hasher, config::standard())
@@ -931,5 +952,42 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         hasher.finalize().into()
     };
 
+    dbg!(&commitment, &proof.commitment);
     commitment == proof.commitment
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rand_core::OsRng;
+
+    use crate::{buffer::MultiBuffer, bytecode::Program};
+
+    fn run_instance(
+        ctx: &[u8],
+        program: &Program,
+        public: &MultiBuffer,
+        private: &MultiBuffer,
+    ) -> bool {
+        let proof = prove(&mut OsRng, ctx, program, public, private);
+        assert!(proof.is_ok());
+        let proof = proof.unwrap();
+        verify(ctx, program, public, &proof)
+    }
+
+    fn assert_instance(ctx: &[u8], program: &Program, public: &MultiBuffer, private: &MultiBuffer) {
+        assert!(run_instance(ctx, program, public, private));
+    }
+
+    #[test]
+    fn test_empty_program() {
+        let program = Program {
+            public_size: 0,
+            private_size: 0,
+            instructions: vec![],
+        };
+        let public = MultiBuffer::new();
+        let private = MultiBuffer::new();
+        assert_instance(b"context", &program, &public, &private)
+    }
 }
