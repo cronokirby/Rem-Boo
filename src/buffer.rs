@@ -1,6 +1,20 @@
 use bincode::{Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
 
+/// Represents a buffer over a given type.
+///
+/// This buffer is used for input, and for holding our stacks.
+pub struct Buffer<T> {
+    data: Vec<T>,
+}
+
+impl<T> Buffer<T> {
+    /// Create a new empty buffer.
+    pub fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+}
+
 /// A MultiBuffer holds a single buffer for each data size.
 ///
 /// The reason to do this is for efficiency, so that we can always have
