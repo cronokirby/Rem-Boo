@@ -20,4 +20,7 @@ trait Interpreter {
 
     /// Copy an element, counting from the top of the stack.
     fn copy_top(&mut self, index: u32);
+
+    /// Assert that the top element is equal to some value, consuming it.
+    fn assert_eq(&mut self, imm: Self::Immediate);
 }
