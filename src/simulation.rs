@@ -17,4 +17,7 @@ trait Interpreter {
 
     /// Compute the xor of the top of the stack and an immediate value.
     fn xor_imm(&mut self, imm: Self::Immediate);
+
+    /// Copy an element, counting from the top of the stack.
+    fn copy_top(&mut self, index: u32);
 }
