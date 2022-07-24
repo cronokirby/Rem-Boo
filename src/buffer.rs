@@ -1,5 +1,9 @@
+use std::ops::BitXorAssign;
+
 use bincode::{Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
+
+use crate::number::Number;
 
 /// Represents a buffer over a given type.
 ///
@@ -8,10 +12,48 @@ pub struct Buffer<T> {
     data: Vec<T>,
 }
 
-impl<T> Buffer<T> {
+impl<T: Number> Buffer<T> {
     /// Create a new empty buffer.
     pub fn new() -> Self {
         Self { data: Vec::new() }
+    }
+
+    pub fn random<R: RngCore + CryptoRng>(rng: &mut R, len: usize) -> Self {
+        let mut data = Vec::with_capacity(len);
+        for _ in 0..len {
+            data.push(T::random(rng));
+        }
+        Self { data }
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn xor(&mut self, other: &Buffer<T>) {
+        for (a, b) in self.data.iter_mut().zip(other.data.iter()) {
+            *a ^= *b;
+        }
+    }
+
+    pub fn read(&self, i: u32) -> Option<T> {
+        self.data.get(i as usize).copied()
+    }
+
+    pub fn push(&mut self, x: T) {
+        self.data.push(x)
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        self.data.pop()
+    }
+
+    pub fn top(&self) -> Option<T> {
+        self.data.last().copied()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.data.iter()
     }
 }
 
