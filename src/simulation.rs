@@ -25,6 +25,9 @@ trait Interpreter {
     /// Push some data onto the stack.
     fn push(&mut self, imm: Self::Immediate);
 
+    /// Read and push some private data onto the stack.
+    fn push_private(&mut self, index: u32);
+
     /// Copy an element, counting from the top of the stack.
     fn copy_top(&mut self, index: u32);
 
@@ -57,7 +60,6 @@ fn exec_instruction<T: Number, I: Interpreter<Immediate = T>>(
     interpreter: &mut I,
     instruction: &Instruction,
     public: &Buffer<T>,
-    private: &Buffer<T>,
 ) {
     match instruction {
         Instruction::Binary(instr, loc) => exec_binary(interpreter, instr, *loc, public),
@@ -72,10 +74,7 @@ fn exec_instruction<T: Number, I: Interpreter<Immediate = T>>(
             }
         },
         Instruction::PushTop => interpreter.copy_top(0),
-        Instruction::PushPrivate(i) => {
-            let data = private.read(*i).unwrap();
-            interpreter.push(data);
-        }
+        Instruction::PushPrivate(i) => interpreter.push_private(*i),
     }
 }
 
@@ -83,9 +82,8 @@ fn exec_program<T: Number, I: Interpreter<Immediate = T>>(
     interpreter: &mut I,
     program: &Program,
     public: &Buffer<T>,
-    private: &Buffer<T>,
 ) {
     for instruction in &program.instructions {
-        exec_instruction(interpreter, instruction, public, private)
+        exec_instruction(interpreter, instruction, public)
     }
 }
