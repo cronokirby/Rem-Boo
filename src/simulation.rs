@@ -6,7 +6,7 @@ use crate::number::Number;
 ///
 /// We use this to abstract both over data types, and over operations.
 /// Using basic operations, we can build up more complicated operations.
-trait Interpreter {
+pub trait Interpreter {
     /// The type of immediate arguments
     type Immediate;
 
@@ -81,7 +81,7 @@ fn exec_instruction<T: Number, I: Interpreter<Immediate = T>>(
     Some(())
 }
 
-fn exec_program<T: Number, I: Interpreter<Immediate = T>>(
+pub fn exec_program<T: Number, I: Interpreter<Immediate = T>>(
     interpreter: &mut I,
     program: &Program,
     public: &Buffer<T>,
@@ -105,6 +105,10 @@ impl<'a, T> Tracer<'a, T> {
             trace: Buffer::new(),
             stack: Buffer::new(),
         }
+    }
+
+    pub fn trace(self) -> Buffer<T> {
+        self.trace
     }
 }
 
