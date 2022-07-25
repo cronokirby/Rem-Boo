@@ -1,6 +1,9 @@
-use crate::buffer::Buffer;
+use std::iter;
+
+use crate::buffer::{Buffer, BufferQueue, Queue};
 use crate::bytecode::{BinaryInstruction, Instruction, Location, Program};
 use crate::number::Number;
+use crate::rng::Prng;
 
 /// Represents an interpreter, which can run operations.
 ///
@@ -21,9 +24,6 @@ pub trait Interpreter {
 
     /// Compute the xor of the top of the stack and an immediate value.
     fn xor_imm(&mut self, imm: Self::Immediate);
-
-    /// Push some data onto the stack.
-    fn push(&mut self, imm: Self::Immediate);
 
     /// Read and push some private data onto the stack.
     fn push_private(&mut self, index: u32);
@@ -139,10 +139,6 @@ impl<'a, T: Number> Interpreter for Tracer<'a, T> {
         self.stack.push(a ^ imm);
     }
 
-    fn push(&mut self, imm: Self::Immediate) {
-        self.stack.push(imm);
-    }
-
     fn push_private(&mut self, index: u32) {
         let data = self.private.read(index).unwrap();
         self.stack.push(data);
@@ -159,5 +155,171 @@ impl<'a, T: Number> Interpreter for Tracer<'a, T> {
     fn assert_eq(&mut self, imm: Self::Immediate) -> bool {
         let data = self.stack.pop().unwrap();
         data == imm
+    }
+}
+
+struct Party<'a, T> {
+    private: &'a Buffer<T>,
+    stack: Buffer<T>,
+}
+
+impl<'a, T> Party<'a, T> {
+    fn new(private: &'a Buffer<T>) -> Self {
+        Self {
+            private,
+            stack: Buffer::new(),
+        }
+    }
+}
+
+impl<'a, T: Number> Party<'a, T> {
+    fn xor(&mut self) {
+        let a = self.stack.pop().unwrap();
+        self.xor_imm(a);
+    }
+
+    fn xor_imm(&mut self, imm: T) {
+        let b = self.stack.pop().unwrap();
+        self.stack.push(imm ^ b);
+    }
+
+    fn and_imm(&mut self, imm: T) {
+        let b = self.stack.pop().unwrap();
+        self.stack.push(imm & b);
+    }
+
+    fn and<Q: Queue<T>>(&mut self, rng: &mut Prng, and_bits: &mut Q, za: T, zb: T) -> T {
+        let a = self.stack.pop().unwrap();
+        let b = self.stack.pop().unwrap();
+        let c = T::random(rng);
+        self.stack.push(c);
+        (za & b) ^ (zb & a) ^ and_bits.next() ^ c
+    }
+
+    fn push(&mut self, imm: T) {
+        self.stack.push(imm);
+    }
+
+    fn pop(&mut self) -> T {
+        self.stack.pop().unwrap()
+    }
+
+    fn push_private(&mut self, index: u32) {
+        let data = self.private.read(index).unwrap();
+        self.stack.push(data);
+    }
+
+    fn copy_top(&mut self, index: u32) {
+        let data = self
+            .stack
+            .read(self.stack.len() as u32 - 1 - index)
+            .unwrap();
+        self.stack.push(data);
+    }
+}
+
+type PartyState<'a, T> = (Prng, BufferQueue<'a, T>, Party<'a, T>, Buffer<T>);
+
+pub struct Simulator<'a, Q, T> {
+    parties: Vec<PartyState<'a, T>>,
+    input_party: Party<'a, T>,
+    extra_messages: Q,
+}
+
+impl<'a, T, Q> Simulator<'a, Q, T> {
+    pub fn new(
+        masked_input: &'a Buffer<T>,
+        rngs: Vec<Prng>,
+        and_bits: &'a [Buffer<T>],
+        masks: &'a [Buffer<T>],
+        extra_messages: Q,
+    ) -> Self {
+        let mut parties = Vec::with_capacity(rngs.len());
+        for ((rng, and_bits), masks) in rngs.into_iter().zip(and_bits.iter()).zip(masks.iter()) {
+            parties.push((
+                rng,
+                BufferQueue::new(and_bits),
+                Party::new(masks),
+                Buffer::new(),
+            ));
+        }
+        let input_party = Party::new(masked_input);
+        Self {
+            parties,
+            input_party,
+            extra_messages,
+        }
+    }
+
+    fn iter_parties(&mut self) -> impl Iterator<Item = &mut Party<'a, T>> {
+        self.parties
+            .iter_mut()
+            .map(|(_, _, party, _)| party)
+            .chain(iter::once(&mut self.input_party))
+    }
+
+    pub fn messages(self) -> Vec<Buffer<T>> {
+        self.parties
+            .into_iter()
+            .map(|(_, _, _, messages)| messages)
+            .collect()
+    }
+}
+
+impl<'a, T: Number, Q: Queue<T>> Interpreter for Simulator<'a, Q, T> {
+    type Immediate = T;
+
+    fn and(&mut self) {
+        let za = self.input_party.pop();
+        let zb = self.input_party.pop();
+        let mut zc = za & zb;
+        for (rng, and_bits, party, messages) in self.parties.iter_mut() {
+            let s_share = party.and(rng, and_bits, za, zb);
+            messages.push(s_share);
+            zc ^= s_share;
+        }
+        zc ^= self.extra_messages.next();
+        self.input_party.push(zc);
+    }
+
+    fn and_imm(&mut self, imm: Self::Immediate) {
+        for party in self.iter_parties() {
+            party.and_imm(imm);
+        }
+    }
+
+    fn xor(&mut self) {
+        for party in self.iter_parties() {
+            party.xor();
+        }
+    }
+
+    fn xor_imm(&mut self, imm: Self::Immediate) {
+        self.input_party.xor_imm(imm);
+    }
+
+    fn push_private(&mut self, index: u32) {
+        for party in self.iter_parties() {
+            party.push_private(index);
+        }
+    }
+
+    fn copy_top(&mut self, index: u32) {
+        for party in self.iter_parties() {
+            party.copy_top(index);
+        }
+    }
+
+    fn assert_eq(&mut self, imm: Self::Immediate) -> bool {
+        // Strategy: xor with immediate, pull the value, assert zero
+        self.xor_imm(imm);
+        let mut output = self.input_party.pop();
+        for (_, _, party, messages) in self.parties.iter_mut() {
+            let mask = party.pop();
+            messages.push(mask);
+            output ^= mask;
+        }
+        output ^= self.extra_messages.next();
+        output == T::zero()
     }
 }

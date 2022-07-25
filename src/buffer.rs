@@ -172,3 +172,22 @@ impl<'a> Queue<u64> for MultiQueue<'a> {
         out
     }
 }
+
+pub struct BufferQueue<'a, T> {
+    buffer: &'a Buffer<T>,
+    i: usize,
+}
+
+impl<'a, T> BufferQueue<'a, T> {
+    pub fn new(buffer: &'a Buffer<T>) -> Self {
+        Self { buffer, i: 0 }
+    }
+}
+
+impl<'a, T: Clone> Queue<T> for BufferQueue<'a, T> {
+    fn next(&mut self) -> T {
+        let out = self.buffer.data[self.i].clone();
+        self.i += 1;
+        out
+    }
+}
