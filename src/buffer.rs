@@ -129,8 +129,8 @@ impl MultiBuffer {
 /// to provide the auxilary messages not part of the simulation. The prover
 /// doesn't need these, and wants a queue which doesn't impact the simulation,
 /// while the verifier wants real messages provided to it inside the proof.
-pub trait Queue {
-    fn next_u64(&mut self) -> u64;
+pub trait Queue<T> {
+    fn next(&mut self) -> T;
 }
 
 /// Represents a queue which always yields 0.
@@ -140,8 +140,8 @@ pub trait Queue {
 #[derive(Clone, Copy, Debug)]
 pub struct NullQueue;
 
-impl Queue for NullQueue {
-    fn next_u64(&mut self) -> u64 {
+impl Queue<u64> for NullQueue {
+    fn next(&mut self) -> u64 {
         0
     }
 }
@@ -164,9 +164,9 @@ impl<'a> MultiQueue<'a> {
     }
 }
 
-impl<'a> Queue for MultiQueue<'a> {
+impl<'a> Queue<u64> for MultiQueue<'a> {
     /// Read the next u64 value from the queue.
-    fn next_u64(&mut self) -> u64 {
+    fn next(&mut self) -> u64 {
         let out = self.buffer.u64s[self.i_u64];
         self.i_u64 += 1;
         out

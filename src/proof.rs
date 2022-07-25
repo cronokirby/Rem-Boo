@@ -150,7 +150,7 @@ impl<'a> Party<'a> {
         let b = self.stack.pop_u64().unwrap();
         let c = rng.next_u64();
         self.stack.push_u64(c);
-        (za & b) ^ (zb & a) ^ and_bits.next_u64() ^ c
+        (za & b) ^ (zb & a) ^ and_bits.next() ^ c
     }
 
     pub fn push_top64(&mut self) {
@@ -185,7 +185,7 @@ struct Simulator<'a, Q> {
     extra_messages: Q,
 }
 
-impl<'a, Q: Queue + Debug> Simulator<'a, Q> {
+impl<'a, Q: Queue<u64> + Debug> Simulator<'a, Q> {
     pub fn new(
         public: &'a MultiBuffer,
         masked_input: &'a MultiBuffer,
@@ -244,7 +244,7 @@ impl<'a, Q: Queue + Debug> Simulator<'a, Q> {
             messages.push_u64(mask);
             output ^= mask;
         }
-        output ^= self.extra_messages.next_u64();
+        output ^= self.extra_messages.next();
         output == 0
     }
 
@@ -275,7 +275,7 @@ impl<'a, Q: Queue + Debug> Simulator<'a, Q> {
                     messages.push_u64(s_share);
                     zc ^= s_share;
                 }
-                zc ^= self.extra_messages.next_u64();
+                zc ^= self.extra_messages.next();
                 self.input_party.push64(zc);
             }
         }
