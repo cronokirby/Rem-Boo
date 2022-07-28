@@ -29,6 +29,9 @@ pub trait Interpreter {
     fn push_private(&mut self, index: u32);
 
     /// Copy an element, counting from the top of the stack.
+    fn copy_bottom(&mut self, index: u32);
+
+    /// Copy an element, counting from the top of the stack.
     fn copy_top(&mut self, index: u32);
 
     /// Assert that the top element is equal to some value, consuming it.
@@ -75,7 +78,8 @@ fn exec_instruction<T: Number, I: Interpreter<Immediate = T>>(
                 interpreter.assert_eq(data);
             }
         },
-        Instruction::PushTop => interpreter.copy_top(0),
+        Instruction::CopyBottom(i) => interpreter.copy_top(*i),
+        Instruction::CopyTop(i) => interpreter.copy_top(*i),
         Instruction::PushPrivate(i) => interpreter.push_private(*i),
     };
     Some(())
@@ -146,6 +150,10 @@ impl<'a, T: Number> Interpreter for Tracer<'a, T> {
     }
 
     fn copy_top(&mut self, index: u32) {
+        self.copy_bottom(self.stack.len() as u32 - 1 - index);
+    }
+
+    fn copy_bottom(&mut self, index: u32) {
         let data = self
             .stack
             .read(self.stack.len() as u32 - 1 - index)
@@ -211,6 +219,10 @@ impl<'a, T: Number> Party<'a, T> {
     }
 
     fn copy_top(&mut self, index: u32) {
+        self.copy_bottom(self.stack.len() as u32 - 1 - index);
+    }
+
+    fn copy_bottom(&mut self, index: u32) {
         let data = self
             .stack
             .read(self.stack.len() as u32 - 1 - index)
@@ -308,6 +320,12 @@ impl<'a, T: Number, Q: Queue<T>> Interpreter for Simulator<'a, Q, T> {
     fn copy_top(&mut self, index: u32) {
         for party in self.iter_parties() {
             party.copy_top(index);
+        }
+    }
+
+    fn copy_bottom(&mut self, index: u32) {
+        for party in self.iter_parties() {
+            party.copy_bottom(index);
         }
     }
 

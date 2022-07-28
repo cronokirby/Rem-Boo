@@ -713,4 +713,31 @@ mod test {
         private.push(0b1101);
         assert_instance(b"context", &program, &public, &private)
     }
+
+    #[test]
+    fn test_copy_top_and_bottom() {
+        let program = Program {
+            public_size: 2,
+            private_size: 2,
+            instructions: vec![
+                PushPrivate(0),
+                PushPrivate(1),
+                CopyTop(1),
+                CopyTop(0),
+                AssertEq(Public(0)),
+                AssertEq(Public(1)),
+                CopyBottom(0),
+                CopyBottom(1),
+                AssertEq(Public(0)),
+                AssertEq(Public(1)),
+            ],
+        };
+        let mut public = Buffer::new();
+        public.push(1);
+        public.push(2);
+        let mut private = Buffer::new();
+        private.push(1);
+        private.push(2);
+        assert_instance(b"context", &program, &public, &private)
+    }
 }

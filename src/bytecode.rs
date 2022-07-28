@@ -27,8 +27,10 @@ pub enum Instruction {
     Binary(BinaryInstruction, Location),
     /// Assert that the top of the stack is equal to some location.
     AssertEq(Location),
-    /// Push the top element of the stack onto the stack, duplicating it.
-    PushTop,
+    /// Copy an element indexed from the bottom of the stack.
+    CopyBottom(u32),
+    /// Copy an element indexed from the top of the stack.
+    CopyTop(u32),
     /// Copy a private element onto the stack.
     PushPrivate(u32),
 }
