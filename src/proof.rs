@@ -13,7 +13,12 @@ use crate::{
     rng::{random_selections, Prng, Seed},
 };
 
-pub type Result<T> = std::result::Result<T, ()>;
+#[derive(Debug)]
+pub enum Error {
+    BadProgram,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 const COMMITMENT_SIZE: usize = 32;
 
@@ -164,7 +169,9 @@ impl Prover {
 
             // Second, execute the program to get a trace of the and bits.
             let mut tracer = Tracer::new(&global_mask);
-            exec_program(&mut tracer, program, public);
+            if exec_program(&mut tracer, program, public).is_none() {
+                return Err(Error::BadProgram);
+            }
             let trace = tracer.trace();
 
             // Now, generate the and bits. The first party doesn't get random bits.
@@ -201,7 +208,7 @@ impl Prover {
             // Then, run the simulation
             let mut simulator = Simulator::new(&masked_input, prngs, &and_bits, &masks, NullQueue);
             if exec_program(&mut simulator, program, public).is_none() {
-                return Err(());
+                return Err(Error::BadProgram);
             }
 
             // Finally, extract out the messages, and hash everything

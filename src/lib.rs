@@ -7,4 +7,4 @@ mod rng;
 mod simulation;
 
 pub use buffer::Buffer;
-pub use proof::{prove, verify, Proof, Result};
+pub use proof::{prove, verify, Error, Proof, Result};
