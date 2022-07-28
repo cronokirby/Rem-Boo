@@ -6,5 +6,5 @@ mod proof;
 mod rng;
 mod simulation;
 
-pub use buffer::MultiBuffer;
-pub use proof::{prove, verify, Error, Proof, Result};
+pub use buffer::Buffer;
+pub use proof::{prove, verify, Proof, Result};

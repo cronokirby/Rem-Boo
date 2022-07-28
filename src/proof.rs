@@ -1,315 +1,19 @@
 use std::fmt::Debug;
-use std::{iter, mem};
+use std::mem;
 
 use bincode::{config, encode_into_std_write, Decode, Encode};
 use rand_core::{CryptoRng, RngCore};
 
+use crate::buffer::{Buffer, BufferQueue};
+use crate::simulation::{exec_program, Simulator, Tracer};
 use crate::{
-    buffer::{MultiBuffer, MultiQueue, NullQueue, Queue},
-    bytecode::{BinaryInstruction, Instruction, Location, Program},
+    buffer::NullQueue,
+    bytecode::Program,
     constants,
     rng::{random_selections, Prng, Seed},
 };
 
-#[derive(Debug)]
-pub enum Error {
-    BadProgram,
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
-
-/// An Interpreter running programs, creating an execution trace.
-///
-/// This trace records values we need to store later for the proof.
-/// In particular, we need to store the results of and operations.
-struct Interpreter<'a> {
-    public: &'a MultiBuffer,
-    private: &'a MultiBuffer,
-    trace: MultiBuffer,
-    stack: MultiBuffer,
-}
-
-impl<'a> Interpreter<'a> {
-    /// Create a new interpreter, with the public and private inputs.
-    pub fn new(public: &'a MultiBuffer, private: &'a MultiBuffer) -> Self {
-        Self {
-            public,
-            private,
-            trace: MultiBuffer::new(),
-            stack: MultiBuffer::new(),
-        }
-    }
-
-    fn pop_u64(&mut self) -> Result<u64> {
-        self.stack.pop_u64().ok_or(Error::BadProgram)
-    }
-
-    fn and64(&mut self, loc: Location) -> Result<()> {
-        match loc {
-            Location::Top => {
-                let left = self.pop_u64()?;
-                let right = self.pop_u64()?;
-                let out = left & right;
-                self.stack.push_u64(out);
-                self.trace.push_u64(out);
-                Ok(())
-            }
-            Location::Public(i) => {
-                let a = self.public.read_u64(i).ok_or(Error::BadProgram)?;
-                let b = self.pop_u64()?;
-                self.stack.push_u64(a & b);
-                Ok(())
-            }
-        }
-    }
-
-    fn xor64(&mut self, loc: Location) -> Result<()> {
-        match loc {
-            Location::Top => {
-                let left = self.pop_u64()?;
-                let right = self.pop_u64()?;
-                self.stack.push_u64(left ^ right);
-                Ok(())
-            }
-            Location::Public(_) => Ok(()),
-        }
-    }
-
-    fn instruction(&mut self, instr: &Instruction) -> Result<()> {
-        match instr {
-            Instruction::Binary(instr, location) => match instr {
-                BinaryInstruction::Xor => self.xor64(*location),
-                BinaryInstruction::And => self.and64(*location),
-            },
-            Instruction::AssertEq(_) => self.pop_u64().map(|_| ()),
-            Instruction::PushTop => {
-                let top = self.pop_u64()?;
-                self.stack.push_u64(top);
-                Ok(())
-            }
-            Instruction::PushPrivate(i) => {
-                let data = self.private.read_u64(*i).ok_or(Error::BadProgram)?;
-                self.stack.push_u64(data);
-                Ok(())
-            }
-        }
-    }
-
-    /// Run the interpreter, storing the trace.
-    pub fn run(&mut self, program: &Program) -> Result<()> {
-        for instr in &program.instructions {
-            self.instruction(instr)?;
-        }
-        Ok(())
-    }
-
-    /// Consume the interpreter, extracting the trace.
-    pub fn trace(self) -> MultiBuffer {
-        self.trace
-    }
-}
-
-/// Represents a single party in the simulated multi-party computation.
-///
-/// This party can run a lot of the computation itself, but sometimes needs
-/// additional information from the outside. We drive the execution by
-/// calling specific methods on the party.
-#[derive(Debug)]
-struct Party<'a> {
-    /// This party's share of the private input.
-    private: &'a MultiBuffer,
-    /// This holds the current state of the party's stack.
-    stack: MultiBuffer,
-}
-
-impl<'a> Party<'a> {
-    pub fn new(private: &'a MultiBuffer) -> Self {
-        Self {
-            private,
-            stack: MultiBuffer::new(),
-        }
-    }
-
-    pub fn xor64(&mut self) {
-        let a = self.stack.pop_u64().unwrap();
-        self.xor64imm(a)
-    }
-
-    pub fn xor64imm(&mut self, imm: u64) {
-        let b = self.stack.pop_u64().unwrap();
-        self.stack.push_u64(imm ^ b)
-    }
-
-    pub fn and64imm(&mut self, imm: u64) {
-        let b = self.stack.pop_u64().unwrap();
-        self.stack.push_u64(imm & b);
-    }
-
-    pub fn and64(&mut self, rng: &mut Prng, and_bits: &mut MultiQueue, za: u64, zb: u64) -> u64 {
-        let a = self.stack.pop_u64().unwrap();
-        let b = self.stack.pop_u64().unwrap();
-        let c = rng.next_u64();
-        self.stack.push_u64(c);
-        (za & b) ^ (zb & a) ^ and_bits.next() ^ c
-    }
-
-    pub fn push_top64(&mut self) {
-        let top = self.stack.pop_u64().unwrap();
-        self.stack.push_u64(top);
-    }
-
-    pub fn push_priv64(&mut self, i: u32) {
-        let x = self.private.read_u64(i).unwrap();
-        self.stack.push_u64(x);
-    }
-
-    pub fn pop64(&mut self) -> u64 {
-        self.stack.pop_u64().unwrap()
-    }
-
-    pub fn push64(&mut self, x: u64) {
-        self.stack.push_u64(x)
-    }
-}
-
-#[derive(Debug)]
-struct Simulator<'a, Q> {
-    public: &'a MultiBuffer,
-    /// For each party, we hold:
-    /// - Their RNG
-    /// - A queue for their and bits
-    /// - The party itself
-    /// - The outgoing messages
-    parties: Vec<(Prng, MultiQueue<'a>, Party<'a>, MultiBuffer)>,
-    input_party: Party<'a>,
-    extra_messages: Q,
-}
-
-impl<'a, Q: Queue<u64> + Debug> Simulator<'a, Q> {
-    pub fn new(
-        public: &'a MultiBuffer,
-        masked_input: &'a MultiBuffer,
-        rngs: Vec<Prng>,
-        and_bits: &'a [MultiBuffer],
-        masks: &'a [MultiBuffer],
-        extra_messages: Q,
-    ) -> Self {
-        let mut parties = Vec::with_capacity(rngs.len());
-        for ((rng, and_bits), masks) in rngs.into_iter().zip(and_bits.iter()).zip(masks.iter()) {
-            parties.push((
-                rng,
-                MultiQueue::new(and_bits),
-                Party::new(masks),
-                MultiBuffer::new(),
-            ));
-        }
-        let input_party = Party::new(masked_input);
-        Self {
-            public,
-            parties,
-            input_party,
-            extra_messages,
-        }
-    }
-
-    fn iter_parties(&mut self) -> impl Iterator<Item = &mut Party<'a>> {
-        self.parties
-            .iter_mut()
-            .map(|(_, _, party, _)| party)
-            .chain(iter::once(&mut self.input_party))
-    }
-
-    fn pub64(&mut self, i: u32) -> u64 {
-        self.public.read_u64(i).unwrap()
-    }
-
-    fn push_top64(&mut self) {
-        for party in self.iter_parties() {
-            party.push_top64();
-        }
-    }
-
-    fn push_priv64(&mut self, i: u32) {
-        for party in self.iter_parties() {
-            party.push_priv64(i);
-        }
-    }
-
-    fn assert_eq64(&mut self, loc: Location) -> bool {
-        // Strategy: xor with the location, pull the value, assert zero
-        self.xor64(loc);
-        let mut output = self.input_party.pop64();
-        for (_, _, party, messages) in self.parties.iter_mut() {
-            let mask = party.pop64();
-            messages.push_u64(mask);
-            output ^= mask;
-        }
-        output ^= self.extra_messages.next();
-        output == 0
-    }
-
-    fn xor64(&mut self, loc: Location) {
-        match loc {
-            Location::Top => self.iter_parties().for_each(|party| party.xor64()),
-            Location::Public(i) => {
-                let imm = self.pub64(i);
-                self.input_party.xor64imm(imm);
-            }
-        };
-    }
-
-    fn and64(&mut self, loc: Location) {
-        match loc {
-            // For public values, the parties can compute locally
-            Location::Public(i) => {
-                let imm = self.pub64(i);
-                self.iter_parties().for_each(|party| party.and64imm(imm));
-            }
-            // For private values, we need interaction
-            Location::Top => {
-                let za = self.input_party.pop64();
-                let zb = self.input_party.pop64();
-                let mut zc = za & zb;
-                for (rng, and_bits, party, messages) in self.parties.iter_mut() {
-                    let s_share = party.and64(rng, and_bits, za, zb);
-                    messages.push_u64(s_share);
-                    zc ^= s_share;
-                }
-                zc ^= self.extra_messages.next();
-                self.input_party.push64(zc);
-            }
-        }
-    }
-
-    fn instruction(&mut self, instr: &Instruction) -> bool {
-        match instr {
-            Instruction::Binary(instr, loc) => match instr {
-                BinaryInstruction::Xor => self.xor64(*loc),
-                BinaryInstruction::And => self.and64(*loc),
-            },
-            Instruction::AssertEq(loc) => return self.assert_eq64(*loc),
-            Instruction::PushTop => self.push_top64(),
-            Instruction::PushPrivate(i) => self.push_priv64(*i),
-        };
-        true
-    }
-
-    pub fn run(&mut self, program: &Program) -> bool {
-        for instr in &program.instructions {
-            if !self.instruction(instr) {
-                return false;
-            }
-        }
-        true
-    }
-
-    pub fn messages(self) -> Vec<MultiBuffer> {
-        self.parties
-            .into_iter()
-            .map(|(_, _, _, messages)| messages)
-            .collect()
-    }
-}
+pub type Result<T> = std::result::Result<T, ()>;
 
 const COMMITMENT_SIZE: usize = 32;
 
@@ -340,7 +44,7 @@ impl CommitmentKey {
 #[derive(Clone, Copy, Debug)]
 enum State<'a> {
     WithoutAux(&'a Seed),
-    WithAux(&'a Seed, &'a MultiBuffer),
+    WithAux(&'a Seed, &'a Buffer<u64>),
 }
 
 impl<'a> State<'a> {
@@ -374,11 +78,11 @@ impl From<blake3::Hash> for Hash {
 
 #[derive(Clone, Debug, Encode, Decode)]
 struct ResponseInstance {
-    first_aux: Option<MultiBuffer>,
+    first_aux: Option<Buffer<u64>>,
     party_seeds: Vec<Seed>,
     commitment_keys: Vec<CommitmentKey>,
-    masked_input: MultiBuffer,
-    messages: MultiBuffer,
+    masked_input: Buffer<u64>,
+    messages: Buffer<u64>,
     commitment: Commitment,
     message_hash_key: [u8; blake3::KEY_LEN],
 }
@@ -396,11 +100,11 @@ struct Prover {
     root_seeds: Vec<Seed>,
     message_hashes: Vec<Hash>,
     message_hash_keys: Vec<[u8; blake3::KEY_LEN]>,
-    all_states: Vec<(MultiBuffer, Vec<Seed>)>,
+    all_states: Vec<(Buffer<u64>, Vec<Seed>)>,
     all_commitment_keys: Vec<Vec<CommitmentKey>>,
     all_commitments: Vec<Vec<Commitment>>,
-    all_masked_inputs: Vec<MultiBuffer>,
-    all_messages: Vec<Vec<MultiBuffer>>,
+    all_masked_inputs: Vec<Buffer<u64>>,
+    all_messages: Vec<Vec<Buffer<u64>>>,
 }
 
 impl Prover {
@@ -409,8 +113,8 @@ impl Prover {
         m: usize,
         n: usize,
         program: &Program,
-        public: &MultiBuffer,
-        private: &MultiBuffer,
+        public: &Buffer<u64>,
+        private: &Buffer<u64>,
     ) -> Result<Self> {
         let mut root_seeds = Vec::with_capacity(m);
         for _ in 0..m {
@@ -450,7 +154,7 @@ impl Prover {
             // First, we need to extract out the input masks:
             let mut masks = Vec::with_capacity(n);
             for prng in &mut prngs {
-                let mask = MultiBuffer::random(prng, private.len_u64());
+                let mask = Buffer::random(prng, private.len());
                 masks.push(mask);
             }
             let mut global_mask = masks[0].clone();
@@ -459,16 +163,16 @@ impl Prover {
             }
 
             // Second, execute the program to get a trace of the and bits.
-            let mut interpreter = Interpreter::new(public, &global_mask);
-            interpreter.run(program)?;
-            let trace = interpreter.trace();
+            let mut tracer = Tracer::new(&global_mask);
+            exec_program(&mut tracer, program, public);
+            let trace = tracer.trace();
 
             // Now, generate the and bits. The first party doesn't get random bits.
             let mut and_bits = Vec::with_capacity(n);
             and_bits.push(trace.clone());
             for seed in &and_seeds[1..] {
                 let mut prng = Prng::seeded(seed);
-                let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
+                let aux = Buffer::random(&mut prng, and_bits[0].len());
                 and_bits[0].xor(&aux);
                 and_bits.push(aux);
             }
@@ -495,10 +199,9 @@ impl Prover {
             masked_input.xor(&global_mask);
 
             // Then, run the simulation
-            let mut simulator =
-                Simulator::new(public, &masked_input, prngs, &and_bits, &masks, NullQueue);
-            if !simulator.run(program) {
-                return Err(Error::BadProgram);
+            let mut simulator = Simulator::new(&masked_input, prngs, &and_bits, &masks, NullQueue);
+            if exec_program(&mut simulator, program, public).is_none() {
+                return Err(());
             }
 
             // Finally, extract out the messages, and hash everything
@@ -630,8 +333,8 @@ pub fn prove<R: RngCore + CryptoRng>(
     rng: &mut R,
     ctx: &[u8],
     program: &Program,
-    public: &MultiBuffer,
-    private: &MultiBuffer,
+    public: &Buffer<u64>,
+    private: &Buffer<u64>,
 ) -> Result<Proof> {
     let prover = Prover::setup(
         rng,
@@ -666,7 +369,7 @@ pub fn prove<R: RngCore + CryptoRng>(
     })
 }
 
-pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof) -> bool {
+pub fn verify(ctx: &[u8], program: &Program, public: &Buffer<u64>, proof: &Proof) -> bool {
     let mut hasher = blake3::Hasher::new_derive_key(constants::CHALLENGE_CONTEXT);
     encode_into_std_write(program, &mut hasher, config::standard()).unwrap();
     encode_into_std_write(public, &mut hasher, config::standard()).unwrap();
@@ -715,7 +418,7 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         // First, we need to extract out the input masks:
         let mut masks = Vec::with_capacity(n);
         for prng in &mut prngs {
-            let mask = MultiBuffer::random(prng, program.private_size as usize);
+            let mask = Buffer::random(prng, program.private_size as usize);
             masks.push(mask);
         }
         let mut global_mask = masks[0].clone();
@@ -724,20 +427,19 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         }
 
         // Second, execute the program to get a trace of the and bits.
-        let mut interpreter = Interpreter::new(public, &global_mask);
-        if interpreter.run(program).is_err() {
-            println!("interpreter failed (0)");
+        let mut tracer = Tracer::new(&global_mask);
+        if exec_program(&mut tracer, program, public).is_none() {
             return false;
         }
-        let trace = interpreter.trace();
-        and_size = trace.len_u64();
+        let trace = tracer.trace();
+        and_size = trace.len();
 
         // Now, generate the and bits. The first party doesn't get random bits.
         let mut and_bits = Vec::with_capacity(n);
         and_bits.push(trace.clone());
         for seed in &and_seeds[1..] {
             let mut prng = Prng::seeded(seed);
-            let aux = MultiBuffer::random(&mut prng, and_bits[0].len_u64());
+            let aux = Buffer::random(&mut prng, and_bits[0].len());
             and_bits[0].xor(&aux);
             and_bits.push(aux);
         }
@@ -835,7 +537,7 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
         // First, we need to extract out the input masks:
         let mut masks = Vec::with_capacity(n);
         for prng in &mut prngs {
-            let mask = MultiBuffer::random(prng, program.private_size as usize);
+            let mask = Buffer::random(prng, program.private_size as usize);
             masks.push(mask);
         }
 
@@ -849,19 +551,18 @@ pub fn verify(ctx: &[u8], program: &Program, public: &MultiBuffer, proof: &Proof
                 }
             }
             let mut prng = Prng::seeded(seed);
-            let aux = MultiBuffer::random(&mut prng, and_size);
+            let aux = Buffer::random(&mut prng, and_size);
             and_bits.push(aux);
         }
 
         let mut simulator = Simulator::new(
-            public,
             &instance.masked_input,
             prngs,
             &and_bits,
             &masks,
-            MultiQueue::new(&instance.messages),
+            BufferQueue::new(&instance.messages),
         );
-        if !simulator.run(program) {
+        if exec_program(&mut simulator, program, public).is_none() {
             return false;
         }
         let mut messages = simulator.messages();
@@ -905,15 +606,15 @@ mod test {
     use rand_core::OsRng;
 
     use crate::{
-        buffer::MultiBuffer, bytecode::BinaryInstruction::*, bytecode::Instruction::*,
+        buffer::Buffer, bytecode::BinaryInstruction::*, bytecode::Instruction::*,
         bytecode::Location::*, bytecode::Program,
     };
 
     fn run_instance(
         ctx: &[u8],
         program: &Program,
-        public: &MultiBuffer,
-        private: &MultiBuffer,
+        public: &Buffer<u64>,
+        private: &Buffer<u64>,
     ) -> bool {
         let proof = prove(&mut OsRng, ctx, program, public, private);
         assert!(proof.is_ok());
@@ -921,7 +622,7 @@ mod test {
         verify(ctx, program, public, &proof)
     }
 
-    fn assert_instance(ctx: &[u8], program: &Program, public: &MultiBuffer, private: &MultiBuffer) {
+    fn assert_instance(ctx: &[u8], program: &Program, public: &Buffer<u64>, private: &Buffer<u64>) {
         assert!(run_instance(ctx, program, public, private));
     }
 
@@ -932,8 +633,8 @@ mod test {
             private_size: 0,
             instructions: vec![],
         };
-        let public = MultiBuffer::new();
-        let private = MultiBuffer::new();
+        let public = Buffer::new();
+        let private = Buffer::new();
         assert_instance(b"context", &program, &public, &private)
     }
 
@@ -944,10 +645,10 @@ mod test {
             private_size: 1,
             instructions: vec![PushPrivate(0), AssertEq(Public(0))],
         };
-        let mut public = MultiBuffer::new();
-        public.push_u64(0xDEADBEEF);
-        let mut private = MultiBuffer::new();
-        private.push_u64(0xDEADBEEF);
+        let mut public = Buffer::new();
+        public.push(0xDEADBEEF);
+        let mut private = Buffer::new();
+        private.push(0xDEADBEEF);
         assert_instance(b"context", &program, &public, &private)
     }
 
@@ -963,11 +664,11 @@ mod test {
                 AssertEq(Public(0)),
             ],
         };
-        let mut public = MultiBuffer::new();
-        public.push_u64(0b11011);
-        let mut private = MultiBuffer::new();
-        private.push_u64(0b00111);
-        private.push_u64(0b11100);
+        let mut public = Buffer::new();
+        public.push(0b11011);
+        let mut private = Buffer::new();
+        private.push(0b00111);
+        private.push(0b11100);
         assert_instance(b"context", &program, &public, &private)
     }
 
@@ -983,11 +684,11 @@ mod test {
                 AssertEq(Public(0)),
             ],
         };
-        let mut public = MultiBuffer::new();
-        public.push_u64(0b00100);
-        let mut private = MultiBuffer::new();
-        private.push_u64(0b00111);
-        private.push_u64(0b11100);
+        let mut public = Buffer::new();
+        public.push(0b00100);
+        let mut private = Buffer::new();
+        private.push(0b00111);
+        private.push(0b11100);
         assert_instance(b"context", &program, &public, &private)
     }
 
@@ -998,11 +699,11 @@ mod test {
             private_size: 1,
             instructions: vec![PushPrivate(0), Binary(And, Public(0)), AssertEq(Public(1))],
         };
-        let mut public = MultiBuffer::new();
-        public.push_u64(0b0011);
-        public.push_u64(0b0001);
-        let mut private = MultiBuffer::new();
-        private.push_u64(0b1101);
+        let mut public = Buffer::new();
+        public.push(0b0011);
+        public.push(0b0001);
+        let mut private = Buffer::new();
+        private.push(0b1101);
         assert_instance(b"context", &program, &public, &private)
     }
 }

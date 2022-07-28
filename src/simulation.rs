@@ -81,6 +81,7 @@ fn exec_instruction<T: Number, I: Interpreter<Immediate = T>>(
     Some(())
 }
 
+#[must_use]
 pub fn exec_program<T: Number, I: Interpreter<Immediate = T>>(
     interpreter: &mut I,
     program: &Program,
