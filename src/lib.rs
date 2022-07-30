@@ -1,3 +1,4 @@
+pub mod circuit;
 mod buffer;
 pub mod bytecode;
 mod constants;
