@@ -17,31 +17,28 @@ pub enum Instruction {
     Instr1 {
         op: Op1,
         input: usize,
-        out: usize,
     },
     Instr2 {
         op: Op2,
         left: usize,
         right: usize,
-        out: usize,
     },
     InstrPub {
         op: Op2,
         input: usize,
         public_input: usize,
-        out: usize,
     },
 }
 
 impl Instruction {
-    fn max_addr(&self) -> usize {
-        match self {
-            Instruction::Instr1 { input, out, .. } => *input.max(out),
-            Instruction::Instr2 {
-                left, right, out, ..
-            } => *left.max(right).max(out),
-            Instruction::InstrPub { input, out, .. } => *input.max(out),
-        }
+    fn has_output(&self) -> bool {
+        !matches!(
+            self,
+            Instruction::Instr1 {
+                op: Op1::Assert,
+                ..
+            }
+        )
     }
 
     fn is_priv_add(&self) -> bool {
@@ -61,7 +58,7 @@ pub struct Circuit {
 impl Circuit {
     pub fn new(priv_size: usize, pub_size: usize, instructions: Vec<Instruction>) -> Self {
         // Take the maximum memory address accessed.
-        let mem_size = instructions.iter().map(|x| x.max_addr()).max().unwrap_or(0);
+        let mem_size = instructions.iter().filter(|x| x.has_output()).count();
         // And then make sure we can also fit the input in memory.
         let mem_size = mem_size.max(priv_size);
 
