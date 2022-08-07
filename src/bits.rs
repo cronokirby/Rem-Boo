@@ -114,6 +114,13 @@ impl BitBuf {
         }
     }
 
+    /// Create a new, empty buffer, with a certain capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        let mut bits = Vec::with_capacity((capacity + 64 - 1) / 64);
+        bits.push(0);
+        Self { bits, index: 0 }
+    }
+
     /// Create a BitBuf with 0 bytes, and a certain size.
     pub fn zeroed(size: usize) -> Self {
         // Since 64 = 2^6, we have the following logic:
