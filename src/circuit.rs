@@ -41,7 +41,7 @@ impl Instruction {
         )
     }
 
-    fn is_priv_add(&self) -> bool {
+    fn is_priv_and(&self) -> bool {
         matches!(self, Instruction::Instr2 { op: Op2::And, .. })
     }
 }
@@ -51,7 +51,7 @@ pub struct Circuit {
     pub priv_size: usize,
     pub pub_size: usize,
     pub(crate) mem_size: usize,
-    pub(crate) trace_size: usize,
+    pub(crate) and_size: usize,
     pub instructions: Vec<Instruction>,
 }
 
@@ -62,12 +62,12 @@ impl Circuit {
         // And then make sure we can also fit the input in memory.
         let mem_size = mem_size.max(priv_size);
 
-        let trace_size = instructions.iter().filter(|x| x.is_priv_add()).count();
+        let trace_size = instructions.iter().filter(|x| x.is_priv_and()).count();
         Self {
             priv_size,
             pub_size,
             mem_size,
-            trace_size,
+            and_size: trace_size,
             instructions,
         }
     }
