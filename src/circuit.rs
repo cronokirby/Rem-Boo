@@ -55,7 +55,10 @@ pub struct Circuit {
 
 impl Circuit {
     pub fn new(priv_size: usize, pub_size: usize, instructions: Vec<Instruction>) -> Self {
+        // Take the maximum memory address accessed.
         let mem_size = instructions.iter().map(|x| x.max_addr()).max().unwrap_or(0);
+        // And then make sure we can also fit the input in memory.
+        let mem_size = mem_size.max(priv_size);
         Self {
             priv_size,
             pub_size,
