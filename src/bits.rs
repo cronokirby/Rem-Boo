@@ -114,6 +114,17 @@ impl BitBuf {
         }
     }
 
+    /// Create a BitBuf with 0 bytes, and a certain size.
+    pub fn zeroed(size: usize) -> Self {
+        // Since 64 = 2^6, we have the following logic:
+        let hi = size >> 6;
+        let lo = size & ((1 << 6) - 1);
+        Self {
+            bits: vec![0u64; hi],
+            index: lo,
+        }
+    }
+
     /// Create a bit buffer from bytes.
     ///
     /// The bits are considered to start at the lsb of bytes[0], and end at
@@ -159,14 +170,18 @@ impl BitBuf {
     }
 
     /// Get a bit in the buffer by index.
-    pub fn get(&self, index: usize) -> Option<Bit> {
+    pub fn read(&self, index: usize) -> Bit {
         // Since 64 = 2^6, we have the following logic:
         let hi = index >> 6;
         let lo = index & ((1 << 6) - 1);
-        if lo >= self.index {
-            return None;
-        }
-        self.bits.get(hi).map(|x| Bit((x >> lo) & 1))
+        Bit((self.bits[hi] >> lo) & 1)
+    }
+
+    /// Write a bit in the buffer by index.
+    pub fn write(&mut self, index: usize, value: Bit) {
+        let hi = index >> 6;
+        let lo = index & ((1 << 6) - 1);
+        self.bits[hi] |= value.0 << lo
     }
 
     /// Return the number of bits held in this buffer.
@@ -256,14 +271,13 @@ mod test {
     }
 
     #[test]
-    fn test_bitbuf_get() {
+    fn test_bitbuf_read() {
         let buf = BitBuf {
             bits: vec![0, 0b10],
             index: 2,
         };
-        assert_eq!(buf.get(65), Some(Bit(1)));
-        assert_eq!(buf.get(64), Some(Bit(0)));
-        assert_eq!(buf.get(67), None);
+        assert_eq!(buf.read(65), Bit(1));
+        assert_eq!(buf.read(64), Bit(0));
     }
 
     #[test]
