@@ -1,6 +1,7 @@
 use crate::bits::BitBuf;
 use crate::circuit;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Instruction {
     Zero,
     Assert(usize),
@@ -9,13 +10,16 @@ pub enum Instruction {
     And(usize, usize),
 }
 
+#[derive(Debug, Clone)]
 pub struct Circuit {
+    pub priv_size: usize,
     pub mem_size: usize,
     pub and_size: usize,
     pub instructions: Vec<Instruction>,
 }
 
 pub fn bake(circuit: &circuit::Circuit, public: BitBuf) -> Circuit {
+    let priv_size = circuit.priv_size;
     let mem_size = circuit.mem_size;
     let and_size = circuit.and_size;
 
@@ -45,6 +49,7 @@ pub fn bake(circuit: &circuit::Circuit, public: BitBuf) -> Circuit {
         .collect();
 
     Circuit {
+        priv_size,
         mem_size,
         and_size,
         instructions,

@@ -1,16 +1,13 @@
 use crate::{
-    bits::{Bit, BitBuf},
-    circuit::Instruction,
-    circuit::{Circuit, Op1, Op2},
+    baker::{Circuit, Instruction},
+    bits::{Bit, BitBuf, BitQueue},
 };
 
 struct Tracer<'a> {
     circuit: &'a Circuit,
-    public_input: &'a BitBuf,
-    wire_masks: &'a BitBuf,
-    and_i: usize,
+    input_masks: &'a BitBuf,
+    and_masks: BitQueue<'a>,
     mem: BitBuf,
-    mem_i: usize,
     trace: BitBuf,
 }
 
@@ -22,70 +19,32 @@ impl<'a> Tracer<'a> {
     ///
     /// We also take the circuit as input, since we use the metadata on input
     /// lengths to setup various internal data structures.
-    pub fn new(circuit: &'a Circuit, public_input: &'a BitBuf, wire_masks: &'a BitBuf) -> Self {
-        assert!(wire_masks.len() == circuit.priv_size + circuit.and_size);
-        assert!(public_input.len() == circuit.pub_size);
-        // Setup memory to contain the input and then zero bits.
-        let mut mem = wire_masks.clone();
-        mem.resize(circuit.mem_size);
+    pub fn new(circuit: &'a Circuit, input_masks: &'a BitBuf, and_masks: &'a BitBuf) -> Self {
+        assert!(input_masks.len() >= circuit.priv_size);
+        assert!(and_masks.len() >= circuit.and_size);
+        // Setup memory to contain the input.
+        let mut mem = input_masks.clone();
+        mem.increase_capacity_to(circuit.mem_size);
         let trace = BitBuf::with_capacity(circuit.and_size);
         Self {
             circuit,
-            public_input,
-            wire_masks,
-            and_i: circuit.priv_size,
+            input_masks,
+            and_masks: BitQueue::new(and_masks),
             mem,
-            mem_i: circuit.priv_size,
             trace,
         }
     }
 
-    fn instr1(&mut self, op: Op1, input: usize) {
-        match op {
-            Op1::Not => {
-                self.mem.write(self.mem_i, self.mem.read(input));
-                self.mem_i += 1;
-            }
-            Op1::Assert => {}
-        }
-    }
-
-    fn instr2(&mut self, op: Op2, left: usize, right: usize) {
-        let l = self.mem.read(left);
-        let r = self.mem.read(right);
-        let out = match op {
-            Op2::Xor => l ^ r,
-            Op2::And => {
-                self.trace.push(l & r);
-                let and_mask = self.wire_masks.read(self.and_i);
-                self.and_i += 1;
-                and_mask
-            }
-        };
-        self.mem.write(self.mem_i, out);
-        self.mem_i += 1;
-    }
-
-    fn instr_pub(&mut self, op: Op2, input: usize, public_input: usize) {
-        let l = self.mem.read(input);
-        let r = self.public_input.read(public_input);
-        let out = match op {
-            Op2::Xor => l ^ r,
-            Op2::And => l & r,
-        };
-        self.mem.write(self.mem_i, out);
-        self.mem_i += 1;
-    }
-
     fn instruction(&mut self, instruction: Instruction) {
         match instruction {
-            Instruction::Instr1 { op, input } => self.instr1(op, input),
-            Instruction::Instr2 { op, left, right } => self.instr2(op, left, right),
-            Instruction::InstrPub {
-                op,
-                input,
-                public_input,
-            } => self.instr_pub(op, input, public_input),
+            Instruction::Zero => self.mem.push(Bit::zero()),
+            Instruction::Assert(_) => {}
+            Instruction::Not(_) => {}
+            Instruction::Xor(a, b) => self.mem.push(self.mem.read(a) ^ self.mem.read(b)),
+            Instruction::And(a, b) => {
+                let c = self.mem.read(a) & self.mem.read(b);
+                
+            },
         }
     }
 
@@ -100,4 +59,22 @@ pub fn trace(circuit: &Circuit, public_input: &BitBuf, priv_input: &BitBuf) -> B
     let mut tracer = Tracer::new(circuit, public_input, priv_input);
     tracer.run();
     tracer.trace
+}
+
+#[derive(Debug, Clone)]
+pub struct PartyMasks {
+    pub input_masks: BitBuf,
+    pub and_out_masks: BitBuf,
+    pub and_val_masks: BitBuf,
+}
+
+struct Simulator {}
+
+pub fn simulate(
+    circuit: &Circuit,
+    public_input: &BitBuf,
+    masked_input: &BitBuf,
+    masks: &[PartyMasks],
+) -> Vec<BitBuf> {
+    todo!()
 }
