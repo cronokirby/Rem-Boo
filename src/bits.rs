@@ -252,7 +252,7 @@ impl Decode for BitBuf {
     }
 }
 
-struct BitQueue<'a> {
+pub struct BitQueue<'a> {
     buf: &'a BitBuf,
     i: usize,
 }
@@ -327,7 +327,7 @@ mod test {
 
     #[test]
     fn test_bitqueue() {
-        let buf = BitBuf::new();
+        let mut buf = BitBuf::new();
         buf.push(Bit(1));
         buf.push(Bit(1));
         buf.push(Bit(0));
