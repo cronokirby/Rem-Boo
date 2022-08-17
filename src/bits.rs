@@ -120,6 +120,11 @@ impl BitBuf {
         }
     }
 
+    pub fn increase_capacity_to(&mut self, capacity: usize) {
+        let mut cap64 = (capacity + 64 - 1) / 64;
+        self.bits.reserve_exact(cap64 - self.bits.len());
+    }
+
     /// Create a new, empty buffer, with a certain capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         let mut bits = Vec::with_capacity((capacity + 64 - 1) / 64);
