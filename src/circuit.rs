@@ -60,14 +60,14 @@ impl Circuit {
         // Take the maximum memory address accessed.
         let mem_size = instructions.iter().filter(|x| x.has_output()).count();
         // And then make sure we can also fit the input in memory.
-        let mem_size = mem_size.max(priv_size);
+        let mem_size = mem_size + priv_size;
 
-        let trace_size = instructions.iter().filter(|x| x.is_priv_and()).count();
+        let and_size = instructions.iter().filter(|x| x.is_priv_and()).count();
         Self {
             priv_size,
             pub_size,
             mem_size,
-            and_size: trace_size,
+            and_size,
             instructions,
         }
     }
