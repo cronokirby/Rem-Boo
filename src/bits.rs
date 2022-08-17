@@ -252,6 +252,23 @@ impl Decode for BitBuf {
     }
 }
 
+struct BitQueue<'a> {
+    buf: &'a BitBuf,
+    i: usize,
+}
+
+impl<'a> BitQueue<'a> {
+    pub fn new(buf: &'a BitBuf) -> Self {
+        Self { buf, i: 0 }
+    }
+
+    pub fn next(&mut self) -> Bit {
+        let out = self.buf.read(self.i);
+        self.i += 1;
+        out
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -306,5 +323,17 @@ mod test {
             index: 16,
         };
         assert_eq!(buf, expected);
+    }
+
+    #[test]
+    fn test_bitqueue() {
+        let buf = BitBuf::new();
+        buf.push(Bit(1));
+        buf.push(Bit(1));
+        buf.push(Bit(0));
+        let mut queue = BitQueue::new(&buf);
+        assert_eq!(queue.next(), Bit(1));
+        assert_eq!(queue.next(), Bit(1));
+        assert_eq!(queue.next(), Bit(0));
     }
 }
