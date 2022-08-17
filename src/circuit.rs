@@ -1,48 +1,22 @@
 use bincode::{Decode, Encode};
 
 #[derive(Clone, Copy, Debug, Decode, Encode)]
-pub enum Op1 {
-    Not,
-    Assert,
-}
-
-#[derive(Clone, Copy, Debug, Decode, Encode)]
-pub enum Op2 {
-    Xor,
-    And,
-}
-
-#[derive(Clone, Copy, Debug, Decode, Encode)]
 pub enum Instruction {
-    Instr1 {
-        op: Op1,
-        input: usize,
-    },
-    Instr2 {
-        op: Op2,
-        left: usize,
-        right: usize,
-    },
-    InstrPub {
-        op: Op2,
-        input: usize,
-        public_input: usize,
-    },
+    Assert(usize),
+    Not(usize),
+    Xor(usize, usize),
+    And(usize, usize),
+    XorPub(usize, usize),
+    AndPub(usize, usize),
 }
 
 impl Instruction {
     fn has_output(&self) -> bool {
-        !matches!(
-            self,
-            Instruction::Instr1 {
-                op: Op1::Assert,
-                ..
-            }
-        )
+        !matches!(self, Instruction::Assert(_))
     }
 
     fn is_priv_and(&self) -> bool {
-        matches!(self, Instruction::Instr2 { op: Op2::And, .. })
+        matches!(self, Instruction::And(_, _))
     }
 }
 

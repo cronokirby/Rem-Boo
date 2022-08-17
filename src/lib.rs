@@ -1,3 +1,4 @@
+mod baker;
 mod bits;
 pub mod circuit;
 mod buffer;
