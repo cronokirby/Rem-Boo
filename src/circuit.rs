@@ -2,7 +2,7 @@ use bincode::{Decode, Encode};
 
 #[derive(Clone, Copy, Debug, Decode, Encode)]
 pub enum Instruction {
-    Assert(usize),
+    CheckZero(usize),
     Not(usize),
     Xor(usize, usize),
     And(usize, usize),
@@ -12,7 +12,7 @@ pub enum Instruction {
 
 impl Instruction {
     fn has_output(&self) -> bool {
-        !matches!(self, Instruction::Assert(_))
+        !matches!(self, Instruction::CheckZero(_))
     }
 
     fn is_priv_and(&self) -> bool {

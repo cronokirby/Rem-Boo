@@ -38,7 +38,7 @@ impl<'a> Tracer<'a> {
     fn instruction(&mut self, instruction: Instruction) {
         match instruction {
             Instruction::Zero => self.mem.push(Bit::zero()),
-            Instruction::Assert(_) => {}
+            Instruction::CheckZero(_) => {}
             Instruction::Not(_) => {}
             Instruction::Xor(a, b) => self.mem.push(self.mem.read(a) ^ self.mem.read(b)),
             Instruction::And(a, b) => {
@@ -90,8 +90,13 @@ impl<'a> Party<'a> {
     }
 }
 
+pub enum Error {
+    AssertionFailed(usize),
+}
+
 struct Simulator<'a> {
     circuit: &'a Circuit,
+    assertion_count: usize,
     input_mem: BitBuf,
     parties: Vec<Party<'a>>,
 }
@@ -106,13 +111,80 @@ impl<'a> Simulator<'a> {
             .collect();
         Self {
             circuit,
+            assertion_count: 0,
             input_mem,
             parties,
         }
     }
 
-    fn run(&mut self) {
-        todo!()
+    fn zero(&mut self) {
+        for party in &mut self.parties {
+            party.mem.push(Bit::zero());
+        }
+        self.input_mem.push(Bit::zero());
+    }
+
+    fn check_zero(&mut self, a: usize) -> Result<(), Error> {
+        let mut mask = Bit::zero();
+        for party in &mut self.parties {
+            let mask_share = party.mem.read(a);
+            party.out.push(mask_share);
+            mask ^= mask_share;
+        }
+        let out = self.input_mem.read(a) ^ mask;
+        if bool::from(out) {
+            return Err(Error::AssertionFailed(self.assertion_count));
+        }
+        self.assertion_count += 1;
+        Ok(())
+    }
+
+    fn xor(&mut self, a: usize, b: usize) {
+        for party in &mut self.parties {
+            party.mem.push(party.mem.read(a) ^ party.mem.read(b));
+        }
+        self.input_mem
+            .push(self.input_mem.read(a) ^ self.input_mem.read(b));
+    }
+
+    fn not(&mut self, a: usize) {
+        for party in &mut self.parties {
+            party.mem.push(party.mem.read(a));
+        }
+        self.input_mem.push(!self.input_mem.read(a));
+    }
+
+    fn and(&mut self, a: usize, b: usize) {
+        let z_a = self.input_mem.read(a);
+        let z_b = self.input_mem.read(b);
+        let mut s = Bit::zero();
+        for party in &mut self.parties {
+            let s_share = (z_a & party.mem.read(b))
+                ^ (z_b & party.mem.read(a))
+                ^ party.and_val_masks.next()
+                ^ party.and_out_masks.next();
+            party.out.push(s_share);
+            s ^= s_share;
+        }
+        self.input_mem.push(s ^ (z_a & z_b));
+    }
+
+    fn instruction(&mut self, instr: &Instruction) -> Result<(), Error> {
+        match *instr {
+            Instruction::Zero => self.zero(),
+            Instruction::CheckZero(a) => self.check_zero(a)?,
+            Instruction::Not(a) => self.not(a),
+            Instruction::Xor(a, b) => self.xor(a, b),
+            Instruction::And(a, b) => self.and(a, b),
+        };
+        Ok(())
+    }
+
+    fn run(&mut self) -> Result<(), Error> {
+        for instruction in &self.circuit.instructions {
+            self.instruction(instruction)?;
+        }
+        Ok(())
     }
 
     fn output(self) -> Vec<BitBuf> {
@@ -120,8 +192,12 @@ impl<'a> Simulator<'a> {
     }
 }
 
-pub fn simulate(circuit: &Circuit, masked_input: &BitBuf, masks: &[PartyMasks]) -> Vec<BitBuf> {
+pub fn simulate(
+    circuit: &Circuit,
+    masked_input: &BitBuf,
+    masks: &[PartyMasks],
+) -> Result<Vec<BitBuf>, Error> {
     let mut simulator = Simulator::new(circuit, masked_input, masks);
-    simulator.run();
-    simulator.output()
+    simulator.run()?;
+    Ok(simulator.output())
 }
