@@ -32,9 +32,9 @@ impl Bit {
     }
 }
 
-impl Into<bool> for Bit {
-    fn into(self) -> bool {
-        self.0 != 0
+impl From<Bit> for bool {
+    fn from(x: Bit) -> Self {
+        x.0 != 0
     }
 }
 
