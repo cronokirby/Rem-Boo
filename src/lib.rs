@@ -4,6 +4,7 @@ pub mod circuit;
 mod buffer;
 pub mod bytecode;
 mod constants;
+mod interpreter;
 mod number;
 mod proof;
 mod rng;
