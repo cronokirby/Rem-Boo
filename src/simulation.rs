@@ -1,344 +1,214 @@
-use std::iter;
+use crate::{
+    baker::{Circuit, Instruction},
+    bits::{Bit, BitBuf, BitQueue},
+};
 
-use crate::buffer::{Buffer, BufferQueue, Queue};
-use crate::bytecode::{BinaryInstruction, Instruction, Location, Program};
-use crate::number::Number;
-use crate::rng::Prng;
-
-/// Represents an interpreter, which can run operations.
-///
-/// We use this to abstract both over data types, and over operations.
-/// Using basic operations, we can build up more complicated operations.
-pub trait Interpreter {
-    /// The type of immediate arguments
-    type Immediate;
-
-    /// Compute the and of the top two items on the stack.
-    fn and(&mut self);
-
-    /// Compute the and of the top of the stack and an immediate value.
-    fn and_imm(&mut self, imm: Self::Immediate);
-
-    /// Compute the xor of the top two items on the stack.
-    fn xor(&mut self);
-
-    /// Compute the xor of the top of the stack and an immediate value.
-    fn xor_imm(&mut self, imm: Self::Immediate);
-
-    /// Read and push some private data onto the stack.
-    fn push_private(&mut self, index: u32);
-
-    /// Copy an element, counting from the top of the stack.
-    fn copy_bottom(&mut self, index: u32);
-
-    /// Copy an element, counting from the top of the stack.
-    fn copy_top(&mut self, index: u32);
-
-    /// Assert that the top element is equal to some value, consuming it.
-    fn assert_eq(&mut self, imm: Self::Immediate) -> bool;
+struct Tracer<'a> {
+    circuit: &'a Circuit,
+    input_masks: &'a BitBuf,
+    and_masks: BitQueue<'a>,
+    mem: BitBuf,
+    trace: BitBuf,
 }
 
-fn exec_binary<T: Number, I: Interpreter<Immediate = T>>(
-    interpreter: &mut I,
-    instruction: &BinaryInstruction,
-    location: Location,
-    public: &Buffer<T>,
-) {
-    match location {
-        Location::Top => match instruction {
-            BinaryInstruction::Xor => interpreter.xor(),
-            BinaryInstruction::And => interpreter.and(),
-        },
-        Location::Public(i) => {
-            let data = public.read(i).unwrap();
-            match instruction {
-                BinaryInstruction::Xor => interpreter.xor_imm(data),
-                BinaryInstruction::And => interpreter.and_imm(data),
+impl<'a> Tracer<'a> {
+    /// Create a new tracer, with a given list of wire masks.
+    ///
+    /// These masks should contain the masks for each input of the circuit,
+    /// follow by masks for each and gate.
+    ///
+    /// We also take the circuit as input, since we use the metadata on input
+    /// lengths to setup various internal data structures.
+    pub fn new(circuit: &'a Circuit, input_masks: &'a BitBuf, and_masks: &'a BitBuf) -> Self {
+        assert!(input_masks.len() >= circuit.priv_size);
+        assert!(and_masks.len() >= circuit.and_size);
+        // Setup memory to contain the input.
+        let mut mem = input_masks.clone();
+        mem.increase_capacity_to(circuit.mem_size);
+        let trace = BitBuf::with_capacity(circuit.and_size);
+        Self {
+            circuit,
+            input_masks,
+            and_masks: BitQueue::new(and_masks),
+            mem,
+            trace,
+        }
+    }
+
+    fn instruction(&mut self, instruction: Instruction) {
+        match instruction {
+            Instruction::Zero => self.mem.push(Bit::zero()),
+            Instruction::Read(a) => self.mem.push(self.mem.read(a)),
+            Instruction::CheckZero(_) => {}
+            Instruction::Not(_) => {}
+            Instruction::Xor(a, b) => self.mem.push(self.mem.read(a) ^ self.mem.read(b)),
+            Instruction::And(a, b) => {
+                let c = self.mem.read(a) & self.mem.read(b);
+                self.trace.push(c);
             }
         }
     }
-}
 
-fn exec_instruction<T: Number, I: Interpreter<Immediate = T>>(
-    interpreter: &mut I,
-    instruction: &Instruction,
-    public: &Buffer<T>,
-) -> Option<()> {
-    match instruction {
-        Instruction::Binary(instr, loc) => exec_binary(interpreter, instr, *loc, public),
-        Instruction::AssertEq(loc) => match loc {
-            Location::Top => {
-                interpreter.xor();
-                if !interpreter.assert_eq(T::zero()) {
-                    return None;
-                }
-            }
-            Location::Public(i) => {
-                let data = public.read(*i).unwrap();
-                interpreter.assert_eq(data);
-            }
-        },
-        Instruction::CopyBottom(i) => interpreter.copy_top(*i),
-        Instruction::CopyTop(i) => interpreter.copy_top(*i),
-        Instruction::PushPrivate(i) => interpreter.push_private(*i),
-    };
-    Some(())
-}
-
-#[must_use]
-pub fn exec_program<T: Number, I: Interpreter<Immediate = T>>(
-    interpreter: &mut I,
-    program: &Program,
-    public: &Buffer<T>,
-) -> Option<()> {
-    for instruction in &program.instructions {
-        exec_instruction(interpreter, instruction, public)?;
-    }
-    Some(())
-}
-
-pub struct Tracer<'a, T> {
-    private: &'a Buffer<T>,
-    trace: Buffer<T>,
-    stack: Buffer<T>,
-}
-
-impl<'a, T> Tracer<'a, T> {
-    pub fn new(private: &'a Buffer<T>) -> Self {
-        Self {
-            private,
-            trace: Buffer::new(),
-            stack: Buffer::new(),
-        }
-    }
-
-    pub fn trace(self) -> Buffer<T> {
-        self.trace
-    }
-}
-
-impl<'a, T: Number> Interpreter for Tracer<'a, T> {
-    type Immediate = T;
-
-    fn and(&mut self) {
-        let a = self.stack.pop().unwrap();
-        let b = self.stack.pop().unwrap();
-        let out = a & b;
-        self.stack.push(out);
-        self.trace.push(out);
-    }
-
-    fn and_imm(&mut self, imm: Self::Immediate) {
-        let a = self.stack.pop().unwrap();
-        self.stack.push(a & imm);
-    }
-
-    fn xor(&mut self) {
-        let a = self.stack.pop().unwrap();
-        let b = self.stack.pop().unwrap();
-        self.stack.push(a ^ b);
-    }
-
-    fn xor_imm(&mut self, imm: Self::Immediate) {
-        let a = self.stack.pop().unwrap();
-        self.stack.push(a ^ imm);
-    }
-
-    fn push_private(&mut self, index: u32) {
-        let data = self.private.read(index).unwrap();
-        self.stack.push(data);
-    }
-
-    fn copy_top(&mut self, index: u32) {
-        self.copy_bottom(self.stack.len() as u32 - 1 - index);
-    }
-
-    fn copy_bottom(&mut self, index: u32) {
-        let data = self
-            .stack
-            .read(self.stack.len() as u32 - 1 - index)
-            .unwrap();
-        self.stack.push(data);
-    }
-
-    fn assert_eq(&mut self, imm: Self::Immediate) -> bool {
-        let data = self.stack.pop().unwrap();
-        data == imm
-    }
-}
-
-struct Party<'a, T> {
-    private: &'a Buffer<T>,
-    stack: Buffer<T>,
-}
-
-impl<'a, T> Party<'a, T> {
-    fn new(private: &'a Buffer<T>) -> Self {
-        Self {
-            private,
-            stack: Buffer::new(),
+    pub fn run(&mut self) {
+        for instruction in &self.circuit.instructions {
+            self.instruction(*instruction);
         }
     }
 }
 
-impl<'a, T: Number> Party<'a, T> {
-    fn xor(&mut self) {
-        let a = self.stack.pop().unwrap();
-        self.xor_imm(a);
-    }
-
-    fn xor_imm(&mut self, imm: T) {
-        let b = self.stack.pop().unwrap();
-        self.stack.push(imm ^ b);
-    }
-
-    fn and_imm(&mut self, imm: T) {
-        let b = self.stack.pop().unwrap();
-        self.stack.push(imm & b);
-    }
-
-    fn and<Q: Queue<T>>(&mut self, rng: &mut Prng, and_bits: &mut Q, za: T, zb: T) -> T {
-        let a = self.stack.pop().unwrap();
-        let b = self.stack.pop().unwrap();
-        let c = T::random(rng);
-        self.stack.push(c);
-        (za & b) ^ (zb & a) ^ and_bits.next() ^ c
-    }
-
-    fn push(&mut self, imm: T) {
-        self.stack.push(imm);
-    }
-
-    fn pop(&mut self) -> T {
-        self.stack.pop().unwrap()
-    }
-
-    fn push_private(&mut self, index: u32) {
-        let data = self.private.read(index).unwrap();
-        self.stack.push(data);
-    }
-
-    fn copy_top(&mut self, index: u32) {
-        self.copy_bottom(self.stack.len() as u32 - 1 - index);
-    }
-
-    fn copy_bottom(&mut self, index: u32) {
-        let data = self
-            .stack
-            .read(self.stack.len() as u32 - 1 - index)
-            .unwrap();
-        self.stack.push(data);
-    }
+pub fn trace(circuit: &Circuit, public_input: &BitBuf, priv_input: &BitBuf) -> BitBuf {
+    let mut tracer = Tracer::new(circuit, public_input, priv_input);
+    tracer.run();
+    tracer.trace
 }
 
-type PartyState<'a, T> = (Prng, BufferQueue<'a, T>, Party<'a, T>, Buffer<T>);
-
-pub struct Simulator<'a, Q, T> {
-    parties: Vec<PartyState<'a, T>>,
-    input_party: Party<'a, T>,
-    extra_messages: Q,
+#[derive(Debug, Clone)]
+pub struct PartyMasks {
+    pub input_masks: BitBuf,
+    pub and_out_masks: BitBuf,
+    pub and_val_masks: BitBuf,
 }
 
-impl<'a, T, Q> Simulator<'a, Q, T> {
-    pub fn new(
-        masked_input: &'a Buffer<T>,
-        rngs: Vec<Prng>,
-        and_bits: &'a [Buffer<T>],
-        masks: &'a [Buffer<T>],
-        extra_messages: Q,
-    ) -> Self {
-        let mut parties = Vec::with_capacity(rngs.len());
-        for ((rng, and_bits), masks) in rngs.into_iter().zip(and_bits.iter()).zip(masks.iter()) {
-            parties.push((
-                rng,
-                BufferQueue::new(and_bits),
-                Party::new(masks),
-                Buffer::new(),
-            ));
-        }
-        let input_party = Party::new(masked_input);
+struct Party<'a> {
+    mem: BitBuf,
+    out: BitBuf,
+    and_val_masks: BitQueue<'a>,
+    and_out_masks: BitQueue<'a>,
+}
+
+impl<'a> Party<'a> {
+    fn new(circuit: &Circuit, masks: &'a PartyMasks) -> Self {
+        let mut mem = masks.input_masks.clone();
+        mem.increase_capacity_to(circuit.mem_size);
+        let out = BitBuf::new();
+        let and_val_masks = BitQueue::new(&masks.and_val_masks);
+        let and_out_masks = BitQueue::new(&masks.and_out_masks);
         Self {
+            mem,
+            out,
+            and_val_masks,
+            and_out_masks,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Error {
+    AssertionFailed(usize),
+}
+
+struct Simulator<'a> {
+    circuit: &'a Circuit,
+    assertion_count: usize,
+    input_mem: BitBuf,
+    parties: Vec<Party<'a>>,
+}
+
+impl<'a> Simulator<'a> {
+    fn new(circuit: &'a Circuit, masked_input: &BitBuf, masks: &'a [PartyMasks]) -> Self {
+        let mut input_mem = masked_input.clone();
+        input_mem.increase_capacity_to(circuit.mem_size);
+        let parties = masks
+            .iter()
+            .map(|masks| Party::new(circuit, masks))
+            .collect();
+        Self {
+            circuit,
+            assertion_count: 0,
+            input_mem,
             parties,
-            input_party,
-            extra_messages,
         }
     }
 
-    fn iter_parties(&mut self) -> impl Iterator<Item = &mut Party<'a, T>> {
-        self.parties
-            .iter_mut()
-            .map(|(_, _, party, _)| party)
-            .chain(iter::once(&mut self.input_party))
+    fn zero(&mut self) {
+        for party in &mut self.parties {
+            party.mem.push(Bit::zero());
+        }
+        self.input_mem.push(Bit::zero());
     }
 
-    pub fn messages(self) -> Vec<Buffer<T>> {
-        self.parties
-            .into_iter()
-            .map(|(_, _, _, messages)| messages)
-            .collect()
+    fn check_zero(&mut self, a: usize) -> Result<(), Error> {
+        let mut mask = Bit::zero();
+        for party in &mut self.parties {
+            let mask_share = party.mem.read(a);
+            party.out.push(mask_share);
+            mask ^= mask_share;
+        }
+        let out = self.input_mem.read(a) ^ mask;
+        if bool::from(out) {
+            return Err(Error::AssertionFailed(self.assertion_count));
+        }
+        self.assertion_count += 1;
+        Ok(())
+    }
+
+    fn read(&mut self, a: usize) {
+        for party in &mut self.parties {
+            party.mem.push(party.mem.read(a));
+        }
+        self.input_mem.push(self.input_mem.read(a));
+    }
+
+    fn xor(&mut self, a: usize, b: usize) {
+        for party in &mut self.parties {
+            party.mem.push(party.mem.read(a) ^ party.mem.read(b));
+        }
+        self.input_mem
+            .push(self.input_mem.read(a) ^ self.input_mem.read(b));
+    }
+
+    fn not(&mut self, a: usize) {
+        for party in &mut self.parties {
+            party.mem.push(party.mem.read(a));
+        }
+        self.input_mem.push(!self.input_mem.read(a));
+    }
+
+    fn and(&mut self, a: usize, b: usize) {
+        let z_a = self.input_mem.read(a);
+        let z_b = self.input_mem.read(b);
+        let mut s = Bit::zero();
+        for party in &mut self.parties {
+            let s_share = (z_a & party.mem.read(b))
+                ^ (z_b & party.mem.read(a))
+                ^ party.and_val_masks.next()
+                ^ party.and_out_masks.next();
+            party.out.push(s_share);
+            s ^= s_share;
+        }
+        self.input_mem.push(s ^ (z_a & z_b));
+    }
+
+    fn instruction(&mut self, instr: &Instruction) -> Result<(), Error> {
+        match *instr {
+            Instruction::Zero => self.zero(),
+            Instruction::Read(a) => self.read(a),
+            Instruction::CheckZero(a) => self.check_zero(a)?,
+            Instruction::Not(a) => self.not(a),
+            Instruction::Xor(a, b) => self.xor(a, b),
+            Instruction::And(a, b) => self.and(a, b),
+        };
+        Ok(())
+    }
+
+    fn run(&mut self) -> Result<(), Error> {
+        for instruction in &self.circuit.instructions {
+            self.instruction(instruction)?;
+        }
+        Ok(())
+    }
+
+    fn output(self) -> Vec<BitBuf> {
+        self.parties.into_iter().map(|party| party.out).collect()
     }
 }
 
-impl<'a, T: Number, Q: Queue<T>> Interpreter for Simulator<'a, Q, T> {
-    type Immediate = T;
-
-    fn and(&mut self) {
-        let za = self.input_party.pop();
-        let zb = self.input_party.pop();
-        let mut zc = za & zb;
-        for (rng, and_bits, party, messages) in self.parties.iter_mut() {
-            let s_share = party.and(rng, and_bits, za, zb);
-            messages.push(s_share);
-            zc ^= s_share;
-        }
-        zc ^= self.extra_messages.next();
-        self.input_party.push(zc);
-    }
-
-    fn and_imm(&mut self, imm: Self::Immediate) {
-        for party in self.iter_parties() {
-            party.and_imm(imm);
-        }
-    }
-
-    fn xor(&mut self) {
-        for party in self.iter_parties() {
-            party.xor();
-        }
-    }
-
-    fn xor_imm(&mut self, imm: Self::Immediate) {
-        self.input_party.xor_imm(imm);
-    }
-
-    fn push_private(&mut self, index: u32) {
-        for party in self.iter_parties() {
-            party.push_private(index);
-        }
-    }
-
-    fn copy_top(&mut self, index: u32) {
-        for party in self.iter_parties() {
-            party.copy_top(index);
-        }
-    }
-
-    fn copy_bottom(&mut self, index: u32) {
-        for party in self.iter_parties() {
-            party.copy_bottom(index);
-        }
-    }
-
-    fn assert_eq(&mut self, imm: Self::Immediate) -> bool {
-        // Strategy: xor with immediate, pull the value, assert zero
-        self.xor_imm(imm);
-        let mut output = self.input_party.pop();
-        for (_, _, party, messages) in self.parties.iter_mut() {
-            let mask = party.pop();
-            messages.push(mask);
-            output ^= mask;
-        }
-        output ^= self.extra_messages.next();
-        output == T::zero()
-    }
+pub fn simulate(
+    circuit: &Circuit,
+    masked_input: &BitBuf,
+    masks: &[PartyMasks],
+) -> Result<Vec<BitBuf>, Error> {
+    let mut simulator = Simulator::new(circuit, masked_input, masks);
+    simulator.run()?;
+    Ok(simulator.output())
 }
