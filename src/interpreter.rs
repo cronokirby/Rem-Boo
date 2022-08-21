@@ -1,6 +1,6 @@
 use crate::baker::{Circuit, Instruction};
 use crate::bits::{Bit, BitBuf};
-use crate::simulation::Error;
+use crate::error::Error;
 
 pub struct Interpreter<'a> {
     circuit: &'a Circuit,

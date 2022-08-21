@@ -1,6 +1,7 @@
 use crate::{
     baker::{Circuit, Instruction},
     bits::{Bit, BitBuf, BitQueue},
+    error::Error,
 };
 
 struct Tracer<'a> {
@@ -90,11 +91,6 @@ impl<'a> Party<'a> {
             and_out_masks,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Error {
-    AssertionFailed(usize),
 }
 
 struct Simulator<'a> {
