@@ -44,6 +44,7 @@ impl<'a> Tracer<'a> {
             Instruction::Xor(a, b) => self.mem.push(self.mem.read(a) ^ self.mem.read(b)),
             Instruction::And(a, b) => {
                 let c = self.mem.read(a) & self.mem.read(b);
+                self.trace.push(c);
             }
         }
     }
