@@ -92,6 +92,7 @@ impl<'a> Party<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Error {
     AssertionFailed(usize),
 }

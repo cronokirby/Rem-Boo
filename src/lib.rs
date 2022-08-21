@@ -11,5 +11,6 @@ mod rng;
 mod simulation;
 mod simulation2;
 
-pub use buffer::Buffer;
-pub use proof::{prove, verify, Error, Proof, Result};
+pub use proof::{prove, verify, Proof};
+pub use circuit::{Circuit, Instruction};
+pub use simulation2::Error;

@@ -19,7 +19,8 @@ pub struct Circuit {
     pub instructions: Vec<Instruction>,
 }
 
-pub fn bake(circuit: &circuit::Circuit, public: BitBuf) -> Circuit {
+pub fn bake(circuit: &circuit::Circuit, mut public: BitBuf) -> Circuit {
+    public.resize(circuit.pub_size);
     let priv_size = circuit.priv_size;
     let mem_size = circuit.mem_size;
     let and_size = circuit.and_size;
