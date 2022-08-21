@@ -9,7 +9,7 @@ pub struct Interpreter<'a> {
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(circuit: &'a Circuit, input: &BitBuf) -> Self {
+    fn new(circuit: &'a Circuit, input: &BitBuf) -> Self {
         let mut mem = input.clone();
         mem.increase_capacity_to(circuit.mem_size);
         Self {
@@ -36,14 +36,20 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<(), Error> {
+    fn run(&mut self) -> Result<(), Error> {
         for instruction in &self.circuit.instructions {
             self.instruction(*instruction)?;
         }
         Ok(())
     }
 
-    pub fn output(self) -> BitBuf {
+    fn output(self) -> BitBuf {
         self.mem
     }
+}
+
+pub fn interpret(circuit: &Circuit, input: &BitBuf) -> Result<BitBuf, Error> {
+    let mut interpreter = Interpreter::new(circuit, input);
+    interpreter.run()?;
+    Ok(interpreter.output())
 }

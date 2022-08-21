@@ -121,7 +121,10 @@ impl BitBuf {
     }
 
     pub fn increase_capacity_to(&mut self, capacity: usize) {
-        let mut cap64 = (capacity + 64 - 1) / 64;
+        let cap64 = (capacity + 64 - 1) / 64;
+        if self.bits.capacity() >= cap64 {
+            return;
+        }
         self.bits.reserve_exact(cap64 - self.bits.len());
     }
 
