@@ -38,6 +38,7 @@ impl<'a> Tracer<'a> {
     fn instruction(&mut self, instruction: Instruction) {
         match instruction {
             Instruction::Zero => self.mem.push(Bit::zero()),
+            Instruction::Read(a) => self.mem.push(self.mem.read(a)),
             Instruction::CheckZero(_) => {}
             Instruction::Not(_) => {}
             Instruction::Xor(a, b) => self.mem.push(self.mem.read(a) ^ self.mem.read(b)),
@@ -139,6 +140,13 @@ impl<'a> Simulator<'a> {
         Ok(())
     }
 
+    fn read(&mut self, a: usize) {
+        for party in &mut self.parties {
+            party.mem.push(party.mem.read(a));
+        }
+        self.input_mem.push(self.input_mem.read(a));
+    }
+
     fn xor(&mut self, a: usize, b: usize) {
         for party in &mut self.parties {
             party.mem.push(party.mem.read(a) ^ party.mem.read(b));
@@ -172,6 +180,7 @@ impl<'a> Simulator<'a> {
     fn instruction(&mut self, instr: &Instruction) -> Result<(), Error> {
         match *instr {
             Instruction::Zero => self.zero(),
+            Instruction::Read(a) => self.read(a),
             Instruction::CheckZero(a) => self.check_zero(a)?,
             Instruction::Not(a) => self.not(a),
             Instruction::Xor(a, b) => self.xor(a, b),
