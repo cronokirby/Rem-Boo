@@ -6,5 +6,5 @@ mod interpreter;
 mod proof;
 mod simulation;
 
-pub use proof::{prove, verify, Proof};
 pub use error::Error;
+pub use proof::{prove, verify, Proof};
