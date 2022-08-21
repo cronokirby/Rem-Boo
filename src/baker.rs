@@ -4,6 +4,7 @@ use crate::circuit;
 #[derive(Debug, Clone, Copy)]
 pub enum Instruction {
     Zero,
+    Read(usize),
     CheckZero(usize),
     Not(usize),
     Xor(usize, usize),
@@ -26,23 +27,23 @@ pub fn bake(circuit: &circuit::Circuit, public: BitBuf) -> Circuit {
     let instructions = circuit
         .instructions
         .iter()
-        .filter_map(|instr| match *instr {
-            circuit::Instruction::CheckZero(a) => Some(Instruction::CheckZero(a)),
-            circuit::Instruction::Not(a) => Some(Instruction::CheckZero(a)),
-            circuit::Instruction::Xor(a, b) => Some(Instruction::Xor(a, b)),
-            circuit::Instruction::And(a, b) => Some(Instruction::And(a, b)),
+        .map(|instr| match *instr {
+            circuit::Instruction::CheckZero(a) => Instruction::CheckZero(a),
+            circuit::Instruction::Not(a) => Instruction::CheckZero(a),
+            circuit::Instruction::Xor(a, b) => Instruction::Xor(a, b),
+            circuit::Instruction::And(a, b) => Instruction::And(a, b),
             circuit::Instruction::XorPub(p, a) => {
                 if public.read(p).into() {
-                    Some(Instruction::Not(a))
+                    Instruction::Not(a)
                 } else {
-                    None
+                    Instruction::Read(a)
                 }
             }
             circuit::Instruction::AndPub(p, a) => {
                 if public.read(p).into() {
-                    None
+                    Instruction::Read(a)
                 } else {
-                    Some(Instruction::Zero)
+                    Instruction::Zero
                 }
             }
         })
