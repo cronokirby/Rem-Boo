@@ -4,6 +4,7 @@ pub mod circuit;
 mod error;
 mod interpreter;
 mod proof;
+mod rng;
 mod simulation;
 
 pub use error::Error;
