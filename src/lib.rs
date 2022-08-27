@@ -1,6 +1,7 @@
 mod baker;
 mod bits;
 pub mod circuit;
+mod constants;
 mod error;
 mod interpreter;
 mod proof;
