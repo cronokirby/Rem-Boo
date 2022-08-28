@@ -7,7 +7,7 @@ use crate::{
 struct Tracer<'a> {
     circuit: &'a Circuit,
     input_masks: &'a BitBuf,
-    and_masks: BitQueue<'a>,
+    and_out_masks: BitQueue<'a>,
     mem: BitBuf,
     trace: BitBuf,
 }
@@ -20,9 +20,9 @@ impl<'a> Tracer<'a> {
     ///
     /// We also take the circuit as input, since we use the metadata on input
     /// lengths to setup various internal data structures.
-    pub fn new(circuit: &'a Circuit, input_masks: &'a BitBuf, and_masks: &'a BitBuf) -> Self {
+    pub fn new(circuit: &'a Circuit, input_masks: &'a BitBuf, and_out_masks: &'a BitBuf) -> Self {
         assert!(input_masks.len() >= circuit.priv_size);
-        assert!(and_masks.len() >= circuit.and_size);
+        assert!(and_out_masks.len() >= circuit.and_size);
         // Setup memory to contain the input.
         let mut mem = input_masks.clone();
         mem.increase_capacity_to(circuit.mem_size);
@@ -30,7 +30,7 @@ impl<'a> Tracer<'a> {
         Self {
             circuit,
             input_masks,
-            and_masks: BitQueue::new(and_masks),
+            and_out_masks: BitQueue::new(and_out_masks),
             mem,
             trace,
         }
@@ -46,6 +46,7 @@ impl<'a> Tracer<'a> {
             Instruction::And(a, b) => {
                 let c = self.mem.read(a) & self.mem.read(b);
                 self.trace.push(c);
+                self.mem.push(self.and_out_masks.next())
             }
         }
     }
@@ -57,8 +58,8 @@ impl<'a> Tracer<'a> {
     }
 }
 
-pub fn trace(circuit: &Circuit, public_input: &BitBuf, priv_input: &BitBuf) -> BitBuf {
-    let mut tracer = Tracer::new(circuit, public_input, priv_input);
+pub fn trace(circuit: &Circuit, input_masks: &BitBuf, and_out_masks: &BitBuf) -> BitBuf {
+    let mut tracer = Tracer::new(circuit, input_masks, and_out_masks);
     tracer.run();
     tracer.trace
 }
